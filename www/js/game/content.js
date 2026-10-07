@@ -43,6 +43,10 @@ export const ITEMS = {
   trashbag:   { name: 'Мешок мусора',  cat: 'cargo',  weight: 4.0, price: 0, questOnly: true },
   crate:      { name: 'Ящик груза',    cat: 'cargo',  weight: 12.0, price: 0, questOnly: true },
 
+  // оружие
+  pistol:     { name: 'Пистолет',      cat: 'weapon', weight: 1.1, price: 900, equip: 'pistol' },
+  ammo:       { name: 'Патроны 9 мм',  cat: 'weapon', weight: 0.3, price: 45, ammo: 12 },
+
   // прочее
   cigarettes: { name: 'Сигареты',      cat: 'misc',   weight: 0.1, price: 11, mood: 7, health: -3 },
   newspaper:  { name: 'Газета',        cat: 'misc',   weight: 0.2, price: 3,  mood: 2 },
@@ -55,7 +59,7 @@ export const SHOP_STOCK = {
   cafe:        ['coffee', 'sandwich', 'burger', 'cola', 'pizza'],
   pharmacy:    ['bandage', 'medkit', 'painkiller', 'water'],
   electronics: ['phone', 'laptop', 'radio', 'gps'],
-  hardware:    ['repairkit', 'jerrycan', 'toolbox', 'lockpick'],
+  hardware:    ['repairkit', 'jerrycan', 'toolbox', 'lockpick', 'pistol', 'ammo'],
   clothes:     ['tshirt', 'jacket', 'suit', 'jeans', 'sneakers', 'cap'],
   autoparts:   ['repairkit', 'jerrycan', 'sparepart', 'toolbox']
 };

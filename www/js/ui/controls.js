@@ -97,7 +97,7 @@ export class Controls {
     this._hold($('b-jump'), () => { this.touch.jump = true; }, () => { this.touch.jump = false; });
 
     $('b-action').addEventListener('click', () => this.game.interact());
-    $('b-punch').addEventListener('click', () => this.game.punch());
+    $('b-punch').addEventListener('click', () => this.game.attack());
     $('b-aim').addEventListener('click', () => this.game.toggleAim());
     $('b-horn').addEventListener('click', () => this.game.horn());
     $('b-light').addEventListener('click', () => this.game.toggleLights());
@@ -122,7 +122,7 @@ export class Controls {
         case 'KeyJ': this.game.panels.toggle('jobs'); break;
         case 'KeyP': case 'Tab': e.preventDefault(); this.game.panels.toggle('phone'); break;
         case 'KeyH': this.game.horn(); break;
-        case 'KeyR': this.game.punch(); break;
+        case 'KeyR': this.game.attack(); break;
         case 'KeyQ': this.game.toggleAim(); break;
         case 'KeyL': this.game.toggleLights(); break;
         case 'KeyV': this.game.player3d.firstPerson = !this.game.player3d.firstPerson; break;

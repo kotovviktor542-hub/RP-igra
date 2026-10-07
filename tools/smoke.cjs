@@ -372,6 +372,23 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     g.toggleAim(false);
     res.aimOff = !p3.aiming && document.getElementById('crosshair').classList.contains('hidden');
 
+    // оружие и отдача
+    g.player.equipped = 'pistol'; g.player.ammo = 5;
+    g.syncWeapon();
+    res.weaponInHand = !!p3.weapon && p3.weaponKind === 'pistol';
+    g.toggleAim(true);
+    const before = g.player.ammo;
+    g.shoot();
+    res.recoil = p3.recoilT > 0 && p3.camKick > 0;
+    res.ammoSpent = g.player.ammo === before - 1;
+    res.fireCooldown = (g.shoot(), g.player.ammo === before - 1);
+    g.player.ammo = 0;
+    g.shoot();
+    res.noAmmo = g.player.ammo === 0;
+    g.player.equipped = null; g.syncWeapon();
+    res.weaponRemoved = !p3.weapon;
+    g.toggleAim(false);
+
     // режим машины
     g.controls.setDrivingMode(true);
     res.driveSwap = !vis(btn('b-punch')) && vis(btn('b-horn'));
@@ -391,6 +408,12 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   ok('прицел выключается', combat.aimOff === true);
   ok('в машине набор кнопок меняется', combat.driveSwap === true);
   ok('пешком кнопки возвращаются', combat.footBack === true);
+  ok('пистолет появляется в руке', combat.weaponInHand === true);
+  ok('выстрел даёт отдачу', combat.recoil === true);
+  ok('выстрел тратит патрон', combat.ammoSpent === true);
+  ok('между выстрелами есть задержка', combat.fireCooldown === true);
+  ok('без патронов не стреляет', combat.noAmmo === true);
+  ok('оружие убирается из руки', combat.weaponRemoved === true);
 
   console.log('\n\u001b[1mРадиальное меню\u001b[0m');
   const radial = await page.evaluate(async () => {
@@ -422,14 +445,14 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     const g = window.__game;
     const dock = document.querySelector('.dock');
     const pr = g.engine.renderer.getPixelRatio();
-    g.engine.setSharpness(1.25);
+    g.engine.setSharpness(1.4);
     const pr2 = g.engine.renderer.getPixelRatio();
-    g.engine.setSharpness(1);
+    g.engine.setSharpness(1.1);
     return { dock: !!dock, pr, pr2 };
   });
   console.log('    ' + JSON.stringify(sharp));
   ok('нижняя панель убрана', sharp.dock === false);
-  ok('разрешение не ниже 0.85', sharp.pr >= 0.85, String(sharp.pr));
+  ok('разрешение не ниже 1.0', sharp.pr >= 1, String(sharp.pr));
   ok('чёткость регулируется', sharp.pr2 > sharp.pr, `${sharp.pr} → ${sharp.pr2}`);
 
   console.log('\n\u001b[1mМодель игрока\u001b[0m');

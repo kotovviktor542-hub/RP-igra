@@ -89,9 +89,12 @@ export class Panels {
           <div class="d">${(it.weight * entry.qty).toFixed(1)} кг${this._effects(it)}</div></div>`;
         const actions = el('div', 'btn-row');
 
-        const usable = it.hunger || it.thirst || it.health || it.energy || it.fuel || it.repair || it.wear;
+        const usable = it.hunger || it.thirst || it.health || it.energy || it.fuel
+          || it.repair || it.wear || it.equip || it.ammo;
         if (usable) {
-          const u = el('button', 'btn sm good', it.wear ? 'Надеть' : 'Исп.');
+          const label = it.equip ? (p.equipped === it.equip ? 'Убрать' : 'В руки')
+            : it.ammo ? 'Зарядить' : it.wear ? 'Надеть' : 'Исп.';
+          const u = el('button', 'btn sm good', label);
           u.onclick = () => this.game.useItem(entry.id);
           actions.appendChild(u);
         }
@@ -117,6 +120,8 @@ export class Panels {
     if (it.health) parts.push(`здоровье ${it.health > 0 ? '+' : ''}${it.health}`);
     if (it.fuel) parts.push(`топливо +${it.fuel} л`);
     if (it.repair) parts.push('ремонт авто');
+    if (it.equip) parts.push('оружие');
+    if (it.ammo) parts.push(`+${it.ammo} патронов`);
     return parts.length ? ' · ' + parts.join(', ') : '';
   }
 
@@ -426,13 +431,13 @@ export class Panels {
 
     b.appendChild(el('div', 'sec', 'Чёткость картинки'));
     const sharpSeg = el('div', 'seg');
-    [['Мягко', 0.85], ['Норма', 1], ['Чётко', 1.25], ['Макс', 1.5]].forEach(([label, v]) => {
+    [['Мягко', 0.85], ['Норма', 1.1], ['Чётко', 1.4], ['Макс', 2]].forEach(([label, v]) => {
       const btn = el('button', 'seg-btn' + (Math.abs(eng.sharpness - v) < 0.01 ? ' active' : ''), label);
       btn.onclick = () => { eng.setSharpness(v); this.refresh(); };
       sharpSeg.appendChild(btn);
     });
     b.appendChild(sharpSeg);
-    b.appendChild(el('div', 'd', '<div class="d" style="margin-top:6px">Если картинка кажется мыльной — поставь «Чётко». Это нагружает видео сильнее.</div>'));
+    b.appendChild(el('div', 'd', '<div class="d" style="margin-top:6px">Если картинка мыльная — поставь «Чётко» или «Макс». Чем выше, тем резче, но тяжелее для видео.</div>'));
 
     b.appendChild(el('div', 'sec', 'Минимальный FPS'));
     const fpsSeg = el('div', 'seg');

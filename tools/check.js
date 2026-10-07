@@ -83,7 +83,7 @@ group('Файлы проекта', () => {
   ok('в настройках есть чёткость картинки', /setSharpness/.test(panels));
   ok('нижней панели больше нет', !/dock/.test(html) && !/dock-btn/.test(panels));
   ok('чат в радиальном меню', /id: 'chat'/.test(fs.readFileSync(path.join(WWW, 'js/ui/radial.js'), 'utf8')));
-  ok('разрешение не падает ниже 0.85', /Math\.max\(0\.85/.test(eng));
+  ok('разрешение не падает ниже 1.0', /Math\.max\(Math\.min\(dpr, 1\.0\)/.test(eng));
   ok('сглаживание включено', /antialias: true/.test(eng));
 
   const ctrl = fs.readFileSync(path.join(WWW, 'js/ui/controls.js'), 'utf8');
@@ -101,6 +101,13 @@ group('Файлы проекта', () => {
   ok('удар анимируется руками', /_poseArms/.test(pl) && /RightForeArm/.test(pl));
   ok('прицел приближает камеру через плечо', /setAim/.test(pl) && /aiming && !driving/.test(pl));
   ok('удар попадает только по NPC спереди', /punch\(\)/.test(mainJs) && /0\.35/.test(mainJs) && /punchHitMoment/.test(mainJs));
+  ok('пистолет и патроны есть в предметах', /pistol:/.test(fs.readFileSync(path.join(WWW, 'js/game/content.js'), 'utf8')) && /ammo:/.test(fs.readFileSync(path.join(WWW, 'js/game/content.js'), 'utf8')));
+  ok('оружие берётся в руку', /equipWeapon/.test(pl) && /makePistol/.test(pl));
+  ok('у выстрела есть отдача', /recoilT/.test(pl) && /camKick/.test(pl) && /RECOIL_TIME/.test(pl));
+  ok('вспышка выстрела', /flash/.test(pl));
+  ok('выстрел тратит патроны', /this\.player\.ammo--/.test(mainJs) && /Нет патронов/.test(mainJs));
+  ok('кнопка атаки переключается на выстрел', /attack\(\)/.test(mainJs) && /WEAPON_ICON/.test(mainJs) && /this\.game\.attack\(\)/.test(ctrl));
+  ok('руки опущены вдоль тела', /_relaxArms/.test(pl) && /_aimBone/.test(pl));
   ok('в машине не ударить и не прицелиться', /Сначала выйди из машины/.test(mainJs) && /В машине не прицелиться/.test(mainJs));
 
   const ch = fs.readFileSync(path.join(WWW, 'js/entities/character.js'), 'utf8');

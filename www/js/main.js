@@ -3,6 +3,9 @@
 import * as THREE from '../vendor/three.module.js';
 import { Engine, defaultQuality } from './core/engine.js';
 import { makeRNG, dist2D, fmtMoney, clamp } from './core/utils.js';
+
+const FIST_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M7 11.2V8.6a1.5 1.5 0 0 1 3 0v2.2"/><path d="M10 10.6V7.8a1.5 1.5 0 0 1 3 0v2.8"/><path d="M13 10.8V8.4a1.5 1.5 0 0 1 3 0v2.6"/><path d="M6.5 10.5h10a2.5 2.5 0 0 1 2.5 2.5v1.6A5.4 5.4 0 0 1 13.6 20h-3A5.1 5.1 0 0 1 5.5 15v-3a1.5 1.5 0 0 1 1-1.5z"/><path d="M5.6 12.6H4.3a1.4 1.4 0 0 1 0-2.8h1.4"/></svg>';
+const WEAPON_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5h14.5a1 1 0 0 1 1 1V12H8.8l-1.2 3.2A2 2 0 0 1 5.7 16.5H4.2a1.2 1.2 0 0 1-1.1-1.6L4.6 11H3a1 1 0 0 1-1-1v-.5a1 1 0 0 1 1-1z"/><path d="M18.5 10.5H21"/><path d="M12.5 12v1.6"/></svg>';
 import { City, GRID, CELL, roadX, OFFSET } from './world/city.js';
 import { Player } from './entities/player.js';
 import { Vehicle, VEHICLES, CAR_COLORS } from './entities/vehicle.js';
@@ -237,7 +240,7 @@ class Game {
     }
     // качественная скелетная модель подгружается фоном и подменяет заглушку
     if (!this.player3d.usingModel) {
-      this.player3d.upgradeModel(this.player.look).catch(() => {});
+      this.player3d.upgradeModel(this.player.look).then(() => this.syncWeapon()).catch(() => {});
     }
     const p = this.player.pos || this._spawnPoint();
     this.player3d.teleport(p.x, p.z, p.rot || 0);
@@ -245,6 +248,7 @@ class Game {
     this.player3d.distDriven = this.player.stats2.distDriven || 0;
 
     this._restoreOwnedVehicles();
+    this.syncWeapon();
     this.paused = false;
   }
 
@@ -700,6 +704,7 @@ class Game {
     const r = S.useItem(this.player, id, { vehicle: this.player3d.vehicle });
     if (!r.ok) { this.hud.toast(r.reason, 'bad'); return; }
     this.hud.toast(r.messages[0], 'good');
+    if (r.equip !== undefined || id === 'pistol') this.syncWeapon();
     if (r.worn) {
       const map = { shirt: 'shirt', pants: 'pants', shoes: 'shoes' };
       // смена внешнего вида по одежде
@@ -741,6 +746,67 @@ class Game {
   openMap() { this.bigmap.show(); }
   closeMap() { this.bigmap.hide(); }
   toggleMap() { this.bigmap.visible ? this.bigmap.hide() : this.bigmap.show(); }
+
+  /** Кнопка атаки: с оружием в руках — выстрел, иначе удар кулаком. */
+  attack() {
+    if (this.player.equipped === 'pistol') this.shoot();
+    else this.punch();
+  }
+
+  /** Выстрел: отдача, вспышка, попадание по лучу от камеры. */
+  shoot() {
+    const p3 = this.player3d;
+    if (!p3) return;
+    if (p3.vehicle) { this.hud.toast('Из машины не постреляешь'); return; }
+    if (!this.player.ammo) { this.hud.toast('Нет патронов'); return; }
+    if (!p3.aiming) this.toggleAim(true);
+    if (!p3.fire()) return;                       // ещё не перезарядился
+
+    this.player.ammo--;
+    this.chat.add('*выстрел*', 'sys');
+
+    // луч из камеры вперёд
+    const cam = this.camera;
+    const ox = cam.position.x, oz = cam.position.z;
+    const dx = Math.sin(p3.camYaw), dz = Math.cos(p3.camYaw);
+    let best = null, bestT = 70;
+    for (const n of this.peds.list) {
+      const px = n.h.root.position.x - ox, pz = n.h.root.position.z - oz;
+      const tdist = px * dx + pz * dz;            // проекция на луч
+      if (tdist < 1 || tdist > bestT) continue;
+      const miss = Math.hypot(px - dx * tdist, pz - dz * tdist);
+      if (miss > 0.7) continue;
+      bestT = tdist; best = n;
+    }
+    if (!best) { this.hud.toast(`Мимо · патронов ${this.player.ammo}`); return; }
+    best.speed = 2.6;
+    best.pauseT = 0;
+    best.h.root.position.x += dx * 0.6;
+    best.h.root.position.z += dz * 0.6;
+    this.chat.add(`* Попадание: ${best.name}`, 'sys');
+    this.hud.toast(`Попал по ${best.name} · патронов ${this.player.ammo}`);
+    for (const n of this.peds.list) {
+      if (dist2D(n.h.root.position.x, n.h.root.position.z, p3.pos.x, p3.pos.z) < 25) {
+        n.speed = Math.min(2.6, n.speed * 1.7);
+        n.pauseT = 0;
+      }
+    }
+  }
+
+  /** Синхронизирует оружие в руке с инвентарём. */
+  syncWeapon() {
+    const p3 = this.player3d;
+    if (!p3) return;
+    const kind = this.player.equipped === 'pistol' ? 'pistol' : null;
+    if (p3.weaponKind !== kind) p3.equipWeapon(kind);
+    const btn = document.getElementById('b-punch');
+    if (btn) {
+      btn.innerHTML = kind ? WEAPON_ICON : FIST_ICON;
+      const label = kind ? 'Выстрел' : 'Удар';
+      btn.setAttribute('aria-label', label);
+      btn.title = label;
+    }
+  }
 
   /** Удар кулаком: анимация + урон ближайшему NPC перед игроком. */
   punch() {

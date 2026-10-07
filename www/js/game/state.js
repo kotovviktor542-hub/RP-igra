@@ -20,6 +20,8 @@ export function createPlayer(opts = {}) {
     rep: 0,
 
     stats: { health: 100, hunger: 80, thirst: 80, energy: 90 },
+    ammo: 0,
+    equipped: null,
     licenses: {},
 
     pos: { x: opts.x ?? 0, z: opts.z ?? 0, rot: 0 },
@@ -98,6 +100,12 @@ export function useItem(p, id, ctx = {}) {
     if (p.stats.health !== before.health) parts.push(`здоровье ${sign(p.stats.health - before.health)}`);
     if (p.stats.energy !== before.energy) parts.push(`энергия ${sign(p.stats.energy - before.energy)}`);
     msgs.push(`${it.name}: ${parts.join(', ') || 'без эффекта'}`);
+  } else if (it.ammo) {
+    p.ammo = (p.ammo || 0) + it.ammo;
+    msgs.push(`Зарядил ${it.ammo} патронов (всего ${p.ammo})`);
+  } else if (it.equip) {
+    p.equipped = p.equipped === it.equip ? null : it.equip;
+    return { ok: true, messages: [p.equipped ? `В руках: ${it.name}` : `Убрал: ${it.name}`], equip: p.equipped };
   } else if (it.wear) {
     msgs.push(`Надел: ${it.name}`);
     p.worn = p.worn || {};
