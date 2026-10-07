@@ -86,6 +86,23 @@ group('Файлы проекта', () => {
   ok('разрешение не падает ниже 0.85', /Math\.max\(0\.85/.test(eng));
   ok('сглаживание включено', /antialias: true/.test(eng));
 
+  const ctrl = fs.readFileSync(path.join(WWW, 'js/ui/controls.js'), 'utf8');
+  const pl = fs.readFileSync(path.join(WWW, 'js/entities/player.js'), 'utf8');
+  const mainJs = fs.readFileSync(path.join(WWW, 'js/main.js'), 'utf8');
+  ok('кнопки экрана — иконки, без текстовых подписей', !/>Е<|>БЕГ<|>ТОРМ<|>СИГ<|>СВЕТ</.test(html));
+  ok('у кнопок есть подписи для доступности', (html.match(/class="rb[^"]*" id="b-[a-z]+" aria-label=/g) || []).length >= 8);
+  ok('есть кнопка удара', /id="b-punch"/.test(html) && /b-punch'\)\.addEventListener/.test(ctrl));
+  ok('есть кнопка прицеливания', /id="b-aim"/.test(html) && /toggleAim/.test(ctrl));
+  ok('перекрестие прицела в разметке', /id="crosshair"/.test(html));
+  ok('кнопки делятся на пешие и автомобильные', /foot-only/.test(html) && /drive-only/.test(html) && /classList\.toggle\('driving'/.test(ctrl));
+  ok('иконки меняются при посадке в машину', /ICON\.exit/.test(ctrl) && /ICON\.turbo/.test(ctrl));
+  ok('удар на клавише R, прицел на Q', /'KeyR'/.test(ctrl) && /'KeyQ'/.test(ctrl));
+  ok('у удара есть перезарядка', /punchCd/.test(pl) && /PUNCH_TIME/.test(pl));
+  ok('удар анимируется руками', /_poseArms/.test(pl) && /RightForeArm/.test(pl));
+  ok('прицел приближает камеру через плечо', /setAim/.test(pl) && /aiming && !driving/.test(pl));
+  ok('удар попадает только по NPC спереди', /punch\(\)/.test(mainJs) && /0\.35/.test(mainJs) && /punchHitMoment/.test(mainJs));
+  ok('в машине не ударить и не прицелиться', /Сначала выйди из машины/.test(mainJs) && /В машине не прицелиться/.test(mainJs));
+
   const ch = fs.readFileSync(path.join(WWW, 'js/entities/character.js'), 'utf8');
   ok('модели персонажей — гражданские', /models\/male\.glb/.test(ch) && /models\/female\.glb/.test(ch));
   ok('общая библиотека анимаций', /models\/anims\.glb/.test(ch));

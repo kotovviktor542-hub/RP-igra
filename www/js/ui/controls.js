@@ -4,6 +4,14 @@ import { clamp } from '../core/utils.js';
 
 const $ = id => document.getElementById(id);
 
+/* иконки, которые меняются при посадке в машину */
+const ICON = {
+  hand: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="3.6" r="1.8"/><path d="M12 7.2v6"/><path d="M12 13.2V10a1.4 1.4 0 0 1 2.8 0v3.2"/><path d="M14.8 13.4v-1.6a1.4 1.4 0 0 1 2.8 0V16a5 5 0 0 1-5 5h-1.4a4.4 4.4 0 0 1-3.2-1.4l-3-3.2a1.5 1.5 0 0 1 2.1-2.1L10 16.2V9.6a1.4 1.4 0 0 1 2.8 0"/></svg>',
+  exit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h8"/><path d="M10 12h10"/><path d="m17 8 4 4-4 4"/></svg>',
+  run: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="15.5" cy="4" r="2.2"/><path d="M12.6 21l1.8-5.4-3.1-2.6-1 4"/><path d="M14.4 15.6 17 21"/><path d="M8.2 9.6 12.6 7.4a2 2 0 0 1 2.2.2l2.1 1.7 2.6.6"/><path d="M11.3 13 9.6 11.4"/><path d="M3.6 12.2h3.2M2.8 16h3.6"/></svg>',
+  turbo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16a8 8 0 1 1 16 0"/><path d="m12 14 4-4"/><circle cx="12" cy="15" r="1.4" fill="currentColor" stroke="none"/></svg>'
+};
+
 export class Controls {
   constructor(game) {
     this.game = game;
@@ -89,6 +97,8 @@ export class Controls {
     this._hold($('b-jump'), () => { this.touch.jump = true; }, () => { this.touch.jump = false; });
 
     $('b-action').addEventListener('click', () => this.game.interact());
+    $('b-punch').addEventListener('click', () => this.game.punch());
+    $('b-aim').addEventListener('click', () => this.game.toggleAim());
     $('b-horn').addEventListener('click', () => this.game.horn());
     $('b-light').addEventListener('click', () => this.game.toggleLights());
 
@@ -112,6 +122,8 @@ export class Controls {
         case 'KeyJ': this.game.panels.toggle('jobs'); break;
         case 'KeyP': case 'Tab': e.preventDefault(); this.game.panels.toggle('phone'); break;
         case 'KeyH': this.game.horn(); break;
+        case 'KeyR': this.game.punch(); break;
+        case 'KeyQ': this.game.toggleAim(); break;
         case 'KeyL': this.game.toggleLights(); break;
         case 'KeyV': this.game.player3d.firstPerson = !this.game.player3d.firstPerson; break;
         case 'Enter': this.game.chat.toggleInput(); break;
@@ -223,7 +235,13 @@ export class Controls {
   }
 
   setDrivingMode(on) {
-    $('b-jump').textContent = on ? 'ВЫЙТИ' : '▲';
-    $('b-run').textContent = on ? 'ТУРБО' : 'БЕГ';
+    $('touch').classList.toggle('driving', !!on);
+    const act = $('b-action'), run = $('b-run');
+    const label = (el, text) => { if (el) { el.setAttribute('aria-label', text); el.title = text; } };
+    label(act, on ? 'Выйти из машины' : 'Действие');
+    label(run, on ? 'Турбо' : 'Бег');
+    if (act) act.innerHTML = on ? ICON.exit : ICON.hand;
+    if (run) run.innerHTML = on ? ICON.turbo : ICON.run;
+    if (on) this.game.toggleAim(false);
   }
 }

@@ -9,6 +9,7 @@ import { clamp, damp, resolveCircleBoxes, dist2D } from '../core/utils.js';
 const WALK = 2.6;
 const RUN = 6.2;
 const RADIUS = 0.42;
+const PUNCH_TIME = 0.42;
 
 export class Player {
   constructor(scene, camera, look) {
@@ -40,6 +41,13 @@ export class Player {
     this.distDriven = 0;
     this.firstPerson = false;
     this.usingModel = false;
+
+    // бой и прицеливание
+    this.punchT = 0;          // прогресс текущего удара (сек, вниз от PUNCH_TIME)
+    this.punchCd = 0;         // перезарядка
+    this.punchHand = 1;       // 1 — правая, -1 — левая (чередуем)
+    this.aiming = false;
+    this._bones = null;
   }
 
   /**
@@ -61,6 +69,7 @@ export class Player {
     this.root.visible = vis;
     this.scene.add(this.root);
     this.usingModel = true;
+    this._bones = null;
     return true;
   }
 
@@ -75,6 +84,7 @@ export class Player {
     this.root.position.copy(pos);
     this.root.rotation.y = rot;
     this.scene.add(this.root);
+    this._bones = null;
   }
 
   teleport(x, z, rot = 0) {
@@ -90,6 +100,25 @@ export class Player {
     this.camPitch = clamp(this.camPitch + dy * 0.0035, -0.45, 1.15);
   }
 
+  /** Начинает удар. Возвращает false, если ещё перезарядка или игрок за рулём. */
+  punch() {
+    if (this.mode === 'drive' || this.punchCd > 0) return false;
+    this.punchT = PUNCH_TIME;
+    this.punchCd = PUNCH_TIME + 0.2;
+    this.punchHand = -this.punchHand;
+    return true;
+  }
+
+  /** Момент попадания — середина анимации. */
+  get punchHitMoment() { return PUNCH_TIME * 0.55; }
+
+  setAim(on) {
+    if (this.mode === 'drive') on = false;
+    this.aiming = !!on;
+    this.camTargetDist = this.aiming ? 2.4 : 5.2;
+    return this.aiming;
+  }
+
   zoom(delta) {
     this.camTargetDist = clamp(this.camTargetDist + delta, 2.2, 11);
   }
@@ -99,6 +128,8 @@ export class Player {
     if (!v) return false;
     this.vehicle = v;
     this.mode = 'drive';
+    this.aiming = false;
+    this.punchT = 0;
     v.driver = this;
     v.engineOn = true;
     this.root.visible = false;
@@ -182,12 +213,77 @@ export class Player {
     this.root.position.set(this.pos.x, this.yOffset, this.pos.z);
     this.root.rotation.y = this.heading;
 
+    if (this.aiming) this.heading = this._turnTo(this.heading, this.camYaw, dt * 14);
+
     let st = 'idle';
     if (!this.grounded) st = 'run';
     else if (this.speed > 4.0) st = 'run';
     else if (this.speed > 0.35) st = 'walk';
     this.moveState = st;
     this.body.update(dt, st, this.speed);
+
+    if (this.punchCd > 0) this.punchCd -= dt;
+    if (this.punchT > 0) {
+      this.punchT -= dt;
+      this._poseArms(1 - Math.max(0, this.punchT) / PUNCH_TIME, this.punchHand);
+    } else if (this.aiming) {
+      this._poseArms(-1, this.punchHand);   // стойка «руки подняты»
+    }
+  }
+
+  /** Накладывает позу рук поверх анимации. k: 0..1 — фаза удара, -1 — боевая стойка. */
+  _poseArms(k, hand) {
+    const b = this._armBones();
+    if (!b) return;
+    const aim = k < 0;
+    // 0 → замах, 0.55 → выпад, 1 → возврат
+    const punch = aim ? 0 : (k < 0.55 ? k / 0.55 : 1 - (k - 0.55) / 0.45);
+    const front = aim ? 0.55 : 0.35 + punch * 1.15;
+    const elbow = aim ? -1.5 : -1.6 + punch * 1.45;
+    const set = (o, x, y, z) => { if (o) o.rotation.set(x, y, z); };
+    if (b.proc) {
+      set(b.shoulderR, hand > 0 ? -front : -0.5, 0, -0.25);
+      set(b.shoulderL, hand > 0 ? -0.5 : -front, 0, 0.25);
+      set(b.elbowR, hand > 0 ? elbow : -1.5, 0, 0);
+      set(b.elbowL, hand > 0 ? -1.5 : elbow, 0, 0);
+    } else {
+      const act = hand > 0 ? b.armR : b.armL;
+      const off = hand > 0 ? b.armL : b.armR;
+      const actF = hand > 0 ? b.foreR : b.foreL;
+      const offF = hand > 0 ? b.foreL : b.foreR;
+      const s = hand > 0 ? 1 : -1;
+      set(act, -front * 0.9, 0, s * (1.15 - punch * 0.55));
+      set(actF, 0, s * (elbow + 1.7), 0);
+      set(off, -0.45, 0, s * 1.25);
+      set(offF, 0, s * 0.35, 0);
+    }
+  }
+
+  _armBones() {
+    if (this._bones !== null) return this._bones;
+    if (this.usingModel) {
+      // имена костей Mixamo после загрузки могут быть 'mixamorig:RightArm'
+      // или санитизированные 'mixamorig_RightArm' — ищем по окончанию.
+      const found = {};
+      this.root.traverse(o => {
+        const n = (o.name || '').replace(/^.*[:_]/, '');
+        if (n === 'RightArm' || n === 'LeftArm' || n === 'RightForeArm' || n === 'LeftForeArm') {
+          if (!found[n]) found[n] = o;
+        }
+      });
+      this._bones = (found.RightArm && found.LeftArm) ? {
+        proc: false,
+        armR: found.RightArm, armL: found.LeftArm,
+        foreR: found.RightForeArm, foreL: found.LeftForeArm
+      } : false;
+    } else if (this.body && this.body.armR) {
+      this._bones = {
+        proc: true,
+        shoulderR: this.body.armR.shoulder, shoulderL: this.body.armL.shoulder,
+        elbowR: this.body.armR.elbow, elbowL: this.body.armL.elbow
+      };
+    } else this._bones = false;
+    return this._bones;
   }
 
   _updateDriving(dt, input, city) {
@@ -243,6 +339,10 @@ export class Player {
     const cp = Math.cos(this.camPitch);
     let cx = fx - Math.sin(this.camYaw) * dist * cp;
     let cz = fz - Math.cos(this.camYaw) * dist * cp;
+    if (this.aiming && !driving) {         // смещение «через плечо»
+      cx += Math.cos(this.camYaw) * 0.55;
+      cz -= Math.sin(this.camYaw) * 0.55;
+    }
     let cy = fy + Math.sin(this.camPitch) * dist + 0.9;
 
     // не даём камере влезть в здание

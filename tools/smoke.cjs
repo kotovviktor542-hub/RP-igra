@@ -346,6 +346,52 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   ok('на дне лестницы короткая прорисовка', gov.far <= 230, String(gov.far));
   ok('населённость подстроилась', gov.traffic <= 8 && gov.peds <= 9, `${gov.traffic}/${gov.peds}`);
 
+  console.log('\n\u001b[1mБой и прицеливание\u001b[0m');
+  const combat = await page.evaluate(async () => {
+    const g = window.__game;
+    const p3 = g.player3d;
+    const btn = id => document.getElementById(id);
+    const vis = el => !!el && getComputedStyle(el).display !== 'none';
+    const res = {};
+    res.footVisible = vis(btn('b-punch')) && vis(btn('b-aim'));
+    res.driveHidden = !vis(btn('b-brake')) && !vis(btn('b-horn'));
+    res.iconsOnly = !/[А-Яа-я]/.test(btn('b-punch').textContent + btn('b-run').textContent);
+
+    // удар
+    const first = g.punch === undefined ? null : (g.punch(), p3.punchT > 0);
+    const cdBlocked = (g.punch(), p3.punchCd > 0);
+    await new Promise(r => setTimeout(r, 400));
+    res.punchStarted = first;
+    res.punchCooldown = cdBlocked;
+
+    // прицел
+    g.toggleAim(true);
+    res.aiming = p3.aiming;
+    res.crossVisible = !document.getElementById('crosshair').classList.contains('hidden');
+    res.camClose = p3.camTargetDist < 3;
+    g.toggleAim(false);
+    res.aimOff = !p3.aiming && document.getElementById('crosshair').classList.contains('hidden');
+
+    // режим машины
+    g.controls.setDrivingMode(true);
+    res.driveSwap = !vis(btn('b-punch')) && vis(btn('b-horn'));
+    g.controls.setDrivingMode(false);
+    res.footBack = vis(btn('b-jump'));
+    await new Promise(r => setTimeout(r, 600));
+    return res;
+  });
+  console.log('    ' + JSON.stringify(combat));
+  ok('кнопки удара и прицела видны пешком', combat.footVisible === true);
+  ok('автомобильные кнопки скрыты пешком', combat.driveHidden === true);
+  ok('на кнопках только иконки', combat.iconsOnly === true);
+  ok('удар запускается', combat.punchStarted === true);
+  ok('у удара есть перезарядка', combat.punchCooldown === true);
+  ok('прицел включается', combat.aiming === true && combat.camClose === true);
+  ok('перекрестие показывается', combat.crossVisible === true);
+  ok('прицел выключается', combat.aimOff === true);
+  ok('в машине набор кнопок меняется', combat.driveSwap === true);
+  ok('пешком кнопки возвращаются', combat.footBack === true);
+
   console.log('\n\u001b[1mРадиальное меню\u001b[0m');
   const radial = await page.evaluate(async () => {
     const g = window.__game;

@@ -742,6 +742,57 @@ class Game {
   closeMap() { this.bigmap.hide(); }
   toggleMap() { this.bigmap.visible ? this.bigmap.hide() : this.bigmap.show(); }
 
+  /** Удар кулаком: анимация + урон ближайшему NPC перед игроком. */
+  punch() {
+    const p3 = this.player3d;
+    if (!p3) return;
+    if (p3.vehicle) { this.hud.toast('Сначала выйди из машины'); return; }
+    if (!p3.punch()) return;                       // перезарядка
+
+    const px = p3.pos.x, pz = p3.pos.z;
+    const fx = Math.sin(p3.heading), fz = Math.cos(p3.heading);
+    let best = null, bd = 2.3;
+    for (const n of this.peds.list) {
+      const dx = n.h.root.position.x - px, dz = n.h.root.position.z - pz;
+      const d = Math.hypot(dx, dz);
+      if (d > bd || d < 0.01) continue;
+      if ((dx / d) * fx + (dz / d) * fz < 0.35) continue;   // только спереди
+      bd = d; best = n;
+    }
+
+    const stats = this.player.stats;
+    stats.energy = Math.max(0, stats.energy - 2);
+
+    setTimeout(() => {
+      if (!best) { this.hud.toast('Удар в воздух'); return; }
+      // отталкиваем и пугаем
+      best.h.root.position.x += fx * 0.9;
+      best.h.root.position.z += fz * 0.9;
+      best.pauseT = 0;
+      best.speed = Math.min(2.6, best.speed * 1.8);
+      this.chat.add(`* Ты ударил: ${best.name}`, 'sys');
+      this.hud.toast('Попал по ' + best.name);
+      for (const n of this.peds.list) {
+        if (dist2D(n.h.root.position.x, n.h.root.position.z, px, pz) < 14) {
+          n.speed = Math.min(2.6, n.speed * 1.5);
+          n.pauseT = 0;
+        }
+      }
+    }, p3.punchHitMoment * 1000);
+  }
+
+  /** Режим прицеливания: камера через плечо + перекрестие. */
+  toggleAim(force) {
+    const p3 = this.player3d;
+    if (!p3) return;
+    if (p3.vehicle) { this.hud.toast('В машине не прицелиться'); return; }
+    const on = p3.setAim(force === undefined ? !p3.aiming : !!force);
+    const cross = document.getElementById('crosshair');
+    if (cross) cross.classList.toggle('hidden', !on);
+    const btn = document.getElementById('b-aim');
+    if (btn) btn.classList.toggle('on', on);
+  }
+
   horn() {
     const v = this.player3d?.vehicle;
     if (!v) { this.hud.toast('Ты не в машине'); return; }
