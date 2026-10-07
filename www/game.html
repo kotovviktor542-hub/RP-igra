@@ -107,6 +107,8 @@
   <div class="hud-top-right">
     <div class="clock-chip"><span id="hud-clock">09:30</span></div>
     <div class="sub-chip right"><span id="hud-fps">60 fps</span></div>
+    <div class="sub-chip right wanted hidden" id="hud-wanted"></div>
+    <div class="sub-chip right ammo hidden" id="hud-ammo">🔫 0</div>
   </div>
 
   <!-- полоски состояния -->
@@ -152,6 +154,8 @@
   </div>
 
   <!-- сенсорное управление -->
+  <div id="dmg-flash" class="dmg-flash"></div>
+
   <div id="crosshair" class="crosshair hidden"><svg viewBox="0 0 48 48" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><circle cx="24" cy="24" r="12" opacity=".65"/><path d="M24 4v9M24 35v9M4 24h9M35 24h9"/><circle cx="24" cy="24" r="1.6" fill="#fff" stroke="none"/></svg></div>
 
   <div id="touch" class="touch">

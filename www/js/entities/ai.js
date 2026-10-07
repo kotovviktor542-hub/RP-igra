@@ -226,10 +226,16 @@ export class Pedestrians {
       h, path, idx,
       next: (idx + 1) % path.length,
       speed: this.rng.range(1.0, 1.7),
+      baseSpeed: 1.4,
       name: NPC_NAMES[this.rng.int(0, NPC_NAMES.length - 1)],
       line: NPC_LINES[this.rng.int(0, NPC_LINES.length - 1)],
       pauseT: 0,
-      dir: this.rng.chance(0.5) ? 1 : -1
+      dir: this.rng.chance(0.5) ? 1 : -1,
+      hp: 100,
+      mood: this.rng.chance(0.4) ? 'brave' : 'coward',  // даст сдачи или убежит
+      state: 'walk',                                     // walk | flee | fight | down
+      stateT: 0,
+      atkCd: 0
     });
   }
 
@@ -240,15 +246,96 @@ export class Pedestrians {
     this.list.splice(i, 1);
   }
 
-  update(dt, px, pz) {
+  /**
+   * Урон пешеходу. Возвращает 'down' | 'fight' | 'flee'.
+   * @param {object} n пешеход
+   * @param {number} dmg урон
+   * @param {number} fx,fz откуда прилетело
+   */
+  hit(n, dmg, fx, fz) {
+    if (!n || n.state === 'down') return 'down';
+    n.hp -= dmg;
+    const dx = n.h.root.position.x - fx, dz = n.h.root.position.z - fz;
+    const d = Math.hypot(dx, dz) || 1;
+    n.h.root.position.x += (dx / d) * 0.5;
+    n.h.root.position.z += (dz / d) * 0.5;
+    if (n.hp <= 0) {
+      n.state = 'down';
+      n.stateT = 22;
+      n.h.root.rotation.x = -Math.PI / 2;      // падает
+      n.h.root.position.y = 0.25;
+      return 'down';
+    }
+    n.state = n.mood === 'brave' ? 'fight' : 'flee';
+    n.stateT = n.state === 'fight' ? 14 : 9;
+    n.pauseT = 0;
+    return n.state;
+  }
+
+  /** Все, кто дерётся с игроком. */
+  get fighters() { return this.list.filter(n => n.state === 'fight'); }
+
+  /** Пугает всех в радиусе (выстрел, сигнал, драка). */
+  scare(x, z, radius = 18) {
+    for (const n of this.list) {
+      if (n.state === 'down' || n.state === 'fight') continue;
+      if (dist2D(n.h.root.position.x, n.h.root.position.z, x, z) > radius) continue;
+      n.state = 'flee';
+      n.stateT = Math.max(n.stateT, 6);
+      n.pauseT = 0;
+    }
+  }
+
+  update(dt, px, pz, ctx = {}) {
     for (let i = this.list.length - 1; i >= 0; i--) {
-      if (dist2D(this.list[i].h.root.position.x, this.list[i].h.root.position.z, px, pz) > 170) this._despawn(i);
+      const n = this.list[i];
+      if (n.state === 'down') continue;        // лежачих не стримим
+      if (dist2D(n.h.root.position.x, n.h.root.position.z, px, pz) > 170) this._despawn(i);
     }
     let guard = 0;
     while (this.list.length < this.max && guard++ < 3) this._spawn(px, pz);
 
-    for (const n of this.list) {
+    for (let i = this.list.length - 1; i >= 0; i--) {
+      const n = this.list[i];
       const p = n.h.root.position;
+
+      // лежит без сознания
+      if (n.state === 'down') {
+        n.stateT -= dt;
+        if (n.stateT <= 0) this._despawn(i);
+        continue;
+      }
+
+      if (n.atkCd > 0) n.atkCd -= dt;
+
+      // убегает или дерётся
+      if (n.state === 'flee' || n.state === 'fight') {
+        n.stateT -= dt;
+        const dx = px - p.x, dz = pz - p.z;
+        const d = Math.hypot(dx, dz) || 1;
+        if (n.stateT <= 0 || (n.state === 'flee' && d > 45)) {
+          n.state = 'walk';
+          n.hp = Math.max(n.hp, 35);
+          continue;
+        }
+        const sgn = n.state === 'flee' ? -1 : 1;
+        const sp = n.state === 'flee' ? 4.4 : 3.6;
+        if (n.state === 'fight' && d < 1.7) {
+          // бьёт игрока
+          n.h.root.rotation.y = Math.atan2(dx, dz);
+          n.h.update(dt, 'idle', 0);
+          if (n.atkCd <= 0) {
+            n.atkCd = 1.3;
+            ctx.onHitPlayer && ctx.onHitPlayer(n, 7);
+          }
+          continue;
+        }
+        p.x += (dx / d) * sp * sgn * dt;
+        p.z += (dz / d) * sp * sgn * dt;
+        n.h.root.rotation.y = Math.atan2(dx * sgn, dz * sgn);
+        n.h.update(dt, 'run', sp);
+        continue;
+      }
 
       if (n.pauseT > 0) {
         n.pauseT -= dt;
@@ -281,12 +368,119 @@ export class Pedestrians {
     }
   }
 
-  /** Ближайший NPC для разговора. */
+  /** Ближайший NPC для разговора (лежачие не считаются). */
   nearest(x, z, maxDist = 3.2) {
     let best = null, bd = maxDist;
     for (const n of this.list) {
+      if (n.state === 'down') continue;
       const d = dist2D(n.h.root.position.x, n.h.root.position.z, x, z);
       if (d < bd) { bd = d; best = n; }
+    }
+    return best;
+  }
+
+  dispose() { while (this.list.length) this._despawn(0); }
+}
+
+
+/* ======================= ПОЛИЦИЯ ======================= */
+/**
+ * Копы появляются при розыске, бегут к игроку, бьют дубинкой,
+ * а при высоком розыске — задерживают.
+ */
+export class Police {
+  constructor(scene, city) {
+    this.scene = scene;
+    this.city = city;
+    this.list = [];
+    this.max = 0;
+    this.rng = makeRNG(9091);
+  }
+
+  setMax(n) {
+    this.max = Math.max(0, n | 0);
+    while (this.list.length > this.max) this._despawn(this.list.length - 1);
+  }
+
+  _spawn(px, pz) {
+    const a = this.rng.range(0, Math.PI * 2);
+    const d = this.rng.range(38, 58);
+    const look = Humanoid.randomLook(this.rng);
+    look.shirt = 0x1b2a4a;          // форма
+    look.pants = 0x1b2030;
+    look.shoes = 0x101014;
+    const h = new Humanoid(look);
+    mergeJointMeshes(h.root);
+    h.root.position.set(px + Math.sin(a) * d, 0, pz + Math.cos(a) * d);
+    this.scene.add(h.root);
+    this.list.push({ h, hp: 140, atkCd: 0, name: 'Патрульный' });
+  }
+
+  _despawn(i) {
+    const c = this.list[i];
+    if (!c) return;
+    this.scene.remove(c.h.root);
+    c.h.dispose();
+    this.list.splice(i, 1);
+  }
+
+  hit(c, dmg) {
+    c.hp -= dmg;
+    if (c.hp <= 0) {
+      c.h.root.rotation.x = -Math.PI / 2;
+      c.h.root.position.y = 0.25;
+      c.down = true;
+      c.downT = 20;
+      return 'down';
+    }
+    return 'hit';
+  }
+
+  /** @param {object} ctx {onHitPlayer(cop,dmg), onArrest(cop), wanted} */
+  update(dt, px, pz, ctx = {}) {
+    for (let i = this.list.length - 1; i >= 0; i--) {
+      const c = this.list[i];
+      if (c.down) {
+        c.downT -= dt;
+        if (c.downT <= 0) this._despawn(i);
+        continue;
+      }
+      if (dist2D(c.h.root.position.x, c.h.root.position.z, px, pz) > 200) { this._despawn(i); continue; }
+      if (c.atkCd > 0) c.atkCd -= dt;
+
+      const p = c.h.root.position;
+      const dx = px - p.x, dz = pz - p.z;
+      const d = Math.hypot(dx, dz) || 1;
+
+      if (d < 1.8) {
+        c.h.root.rotation.y = Math.atan2(dx, dz);
+        c.h.update(dt, 'idle', 0);
+        if (c.atkCd <= 0) {
+          c.atkCd = 1.1;
+          if ((ctx.wanted || 0) >= 3) ctx.onArrest && ctx.onArrest(c);
+          else ctx.onHitPlayer && ctx.onHitPlayer(c, 9);
+        }
+        continue;
+      }
+
+      const sp = 5.2;
+      p.x += (dx / d) * sp * dt;
+      p.z += (dz / d) * sp * dt;
+      c.h.root.rotation.y = Math.atan2(dx, dz);
+      c.h.update(dt, 'run', sp);
+    }
+
+    let guard = 0;
+    while (this.list.filter(c => !c.down).length < this.max && guard++ < 2) this._spawn(px, pz);
+  }
+
+  /** Ближайший коп (для удара/выстрела игрока). */
+  nearest(x, z, maxDist = 3) {
+    let best = null, bd = maxDist;
+    for (const c of this.list) {
+      if (c.down) continue;
+      const d = dist2D(c.h.root.position.x, c.h.root.position.z, x, z);
+      if (d < bd) { bd = d; best = c; }
     }
     return best;
   }

@@ -107,6 +107,15 @@ group('Файлы проекта', () => {
   ok('вспышка выстрела', /flash/.test(pl));
   ok('выстрел тратит патроны', /this\.player\.ammo--/.test(mainJs) && /Нет патронов/.test(mainJs));
   ok('кнопка атаки переключается на выстрел', /attack\(\)/.test(mainJs) && /WEAPON_ICON/.test(mainJs) && /this\.game\.attack\(\)/.test(ctrl));
+  const aiJs = fs.readFileSync(path.join(WWW, 'js/entities/ai.js'), 'utf8');
+  ok('у пешеходов есть здоровье', /hp: 100/.test(aiJs) && /hit\(n, dmg/.test(aiJs));
+  ok('пешеходы падают в нокаут', /'down'/.test(aiJs) && /rotation\.x = -Math\.PI \/ 2/.test(aiJs));
+  ok('смелые дают сдачи, трусы убегают', /'brave'/.test(aiJs) && /'flee'/.test(aiJs) && /onHitPlayer/.test(aiJs));
+  ok('есть полиция', /export class Police/.test(aiJs) && /onArrest/.test(aiJs));
+  ok('розыск растёт и затухает', /addWanted/.test(mainJs) && /this\.wanted = Math\.max\(0, this\.wanted - dt/.test(mainJs));
+  ok('задержание со штрафом', /_arrest\(\)/.test(mainJs) && /Задержан/.test(mainJs));
+  ok('урон игроку от NPC', /hurtPlayer/.test(mainJs) && /flashDamage/.test(mainJs));
+  ok('в HUD есть розыск и патроны', /id="hud-wanted"/.test(html) && /id="hud-ammo"/.test(html));
   ok('руки опущены вдоль тела', /_relaxArms/.test(pl) && /_aimBone/.test(pl));
   ok('в машине не ударить и не прицелиться', /Сначала выйди из машины/.test(mainJs) && /В машине не прицелиться/.test(mainJs));
 

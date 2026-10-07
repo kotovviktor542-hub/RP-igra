@@ -35,6 +35,15 @@ export class HUD {
     this._toasts = [];
   }
 
+  /** Красная вспышка по краям при получении урона. */
+  flashDamage() {
+    const el = $('dmg-flash');
+    if (!el) return;
+    el.classList.remove('on');
+    void el.offsetWidth;
+    el.classList.add('on');
+  }
+
   show() { this.root.classList.remove('hidden'); }
   hide() { this.root.classList.add('hidden'); }
 
@@ -50,12 +59,24 @@ export class HUD {
     });
   }
 
-  update(p, engine, player) {
+  update(p, engine, player, extra = {}) {
     $('hud-money').textContent = fmtMoney(p.money);
     $('hud-bank').textContent = 'Банк ' + fmtMoney(p.bank);
     $('hud-level').textContent = `Ур. ${p.level} · ${p.xp}/${ECONOMY.levelXp(p.level)} XP`;
     $('hud-clock').textContent = engine.clockString;
     $('hud-fps').textContent = engine.fps + ' fps';
+
+    const w = Math.floor(extra.wanted || 0);
+    const we = $('hud-wanted');
+    if (we) {
+      we.textContent = w ? '★'.repeat(w) : '';
+      we.classList.toggle('hidden', w === 0);
+    }
+    const ae = $('hud-ammo');
+    if (ae) {
+      ae.textContent = '🔫 ' + (extra.ammo || 0);
+      ae.classList.toggle('hidden', !extra.armed);
+    }
 
     STATS.forEach(s => {
       const v = clamp(p.stats[s.id], 0, 100);

@@ -389,6 +389,39 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     res.weaponRemoved = !p3.weapon;
     g.toggleAim(false);
 
+    // драка с NPC, розыск и полиция
+    g.player.equipped = null; g.syncWeapon();
+    g.peds.setMax(6);
+    await new Promise(r => setTimeout(r, 600));
+    const victim = g.peds.list[0];
+    if (victim) {
+      victim.mood = 'brave';
+      g.peds.hit(victim, 26, p3.pos.x, p3.pos.z);
+      res.npcFights = victim.state === 'fight' && victim.hp < 100;
+      g.peds.hit(victim, 200, p3.pos.x, p3.pos.z);
+      res.npcDown = victim.state === 'down';
+    }
+    const coward = g.peds.list.find(n => n.state === 'walk');
+    if (coward) {
+      coward.mood = 'coward';
+      g.peds.hit(coward, 10, p3.pos.x, p3.pos.z);
+      res.npcFlees = coward.state === 'flee';
+    }
+    g.wanted = 0;
+    g.addWanted(1.2, 'тест');
+    res.wantedUp = g.wanted >= 1;
+    g.police.setMax(2);
+    g.police.update(0.1, p3.pos.x, p3.pos.z, { wanted: g.wanted });
+    res.copsSpawned = g.police.list.length > 0;
+    const hpBefore = g.player.stats.health;
+    g.hurtPlayer(9, 'Патрульный');
+    res.playerHurt = g.player.stats.health === hpBefore - 9;
+    const moneyBefore = g.player.money;
+    g.wanted = 3;
+    g._arrest();
+    res.arrested = g.wanted === 0 && g.player.money < moneyBefore && g.police.list.length === 0;
+    g.player.stats.health = 100;
+
     // режим машины
     g.controls.setDrivingMode(true);
     res.driveSwap = !vis(btn('b-punch')) && vis(btn('b-horn'));
@@ -414,6 +447,13 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   ok('между выстрелами есть задержка', combat.fireCooldown === true);
   ok('без патронов не стреляет', combat.noAmmo === true);
   ok('оружие убирается из руки', combat.weaponRemoved === true);
+  ok('смелый NPC даёт сдачи', combat.npcFights === true);
+  ok('NPC падает в нокаут', combat.npcDown === true);
+  ok('трусливый NPC убегает', combat.npcFlees === true);
+  ok('розыск повышается', combat.wantedUp === true);
+  ok('полиция появляется', combat.copsSpawned === true);
+  ok('игрок получает урон', combat.playerHurt === true);
+  ok('задержание работает', combat.arrested === true);
 
   console.log('\n\u001b[1mРадиальное меню\u001b[0m');
   const radial = await page.evaluate(async () => {

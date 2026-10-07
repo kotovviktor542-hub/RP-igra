@@ -9,7 +9,7 @@ const WEAPON_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" 
 import { City, GRID, CELL, roadX, OFFSET } from './world/city.js';
 import { Player } from './entities/player.js';
 import { Vehicle, VEHICLES, CAR_COLORS } from './entities/vehicle.js';
-import { Traffic, Pedestrians } from './entities/ai.js';
+import { Traffic, Pedestrians, Police } from './entities/ai.js';
 import { HUD } from './ui/hud.js';
 import { Panels } from './ui/panels.js';
 import { Chat } from './ui/chat.js';
@@ -117,6 +117,9 @@ class Game {
 
     this.traffic = new Traffic(this.scene, this.city, this.engine.quality.traffic);
     this.peds = new Pedestrians(this.scene, this.city, this.engine.quality.npc);
+    this.police = new Police(this.scene, this.city);
+    this.wanted = 0;            // уровень розыска 0…5
+    this._crimeCool = 0;
 
     this.creator = new Creator(
       data => this.startNewGame(data),
@@ -248,6 +251,9 @@ class Game {
     this.player3d.distDriven = this.player.stats2.distDriven || 0;
 
     this._restoreOwnedVehicles();
+    this.wanted = 0;
+    this.police.setMax(0);
+    this.police.dispose();
     this.syncWeapon();
     this.paused = false;
   }
@@ -747,6 +753,52 @@ class Game {
   closeMap() { this.bigmap.hide(); }
   toggleMap() { this.bigmap.visible ? this.bigmap.hide() : this.bigmap.show(); }
 
+  /** Игрока ударили. */
+  hurtPlayer(dmg, who) {
+    const p = this.player;
+    p.stats.health = Math.max(0, p.stats.health - dmg);
+    this.hud.flashDamage && this.hud.flashDamage();
+    if (who && !this._hitMsgCd) {
+      this._hitMsgCd = 1.2;
+      this.chat.add(`* ${who} бьёт тебя`, 'sys');
+    }
+    if (p.stats.health <= 0) this._onDeath();
+  }
+
+  /** Добавляет розыск. */
+  addWanted(amount, reason) {
+    const before = Math.floor(this.wanted);
+    this.wanted = Math.min(5, this.wanted + amount);
+    this._crimeCool = 20;
+    const now = Math.floor(this.wanted);
+    if (now > before) {
+      this.hud.toast(`Розыск: ${now} ${now === 1 ? 'звезда' : 'звёзды'}${reason ? ' · ' + reason : ''}`, 'bad');
+      this.chat.add(`* Полиция объявила розыск (${now})`, 'sys');
+    }
+  }
+
+  /** Задержание: штраф и доставка в участок. */
+  _arrest() {
+    const p = this.player;
+    const fine = Math.min(p.money, 150 + Math.floor(this.wanted) * 200);
+    p.money -= fine;
+    this.wanted = 0;
+    this.police.setMax(0);
+    this.police.dispose();
+    if (this.player3d.vehicle) {
+      this.player3d.exitVehicle();
+      this.controls.setDrivingMode(false);
+    }
+    const st = this.city.nearestPoi(this.player3d.pos.x, this.player3d.pos.z,
+      x => x.type === 'police' || x.type === 'cityhall');
+    if (st) this.player3d.teleport(st.poi.x, st.poi.z + 6, 0);
+    this.player.equipped = null;
+    this.player.ammo = 0;
+    this.syncWeapon();
+    this.hud.toast(`Задержан. Штраф ${fine} $, оружие изъято`, 'bad');
+    this.chat.add('* Тебя задержали', 'sys');
+  }
+
   /** Кнопка атаки: с оружием в руках — выстрел, иначе удар кулаком. */
   attack() {
     if (this.player.equipped === 'pistol') this.shoot();
@@ -769,28 +821,41 @@ class Game {
     const cam = this.camera;
     const ox = cam.position.x, oz = cam.position.z;
     const dx = Math.sin(p3.camYaw), dz = Math.cos(p3.camYaw);
-    let best = null, bestT = 70;
+    const probe = (tx, tz) => {
+      const rx = tx - ox, rz = tz - oz;
+      const along = rx * dx + rz * dz;
+      if (along < 1 || along > 70) return 0;
+      const miss = Math.hypot(rx - dx * along, rz - dz * along);
+      return miss > 0.8 ? 0 : along;
+    };
+
+    let best = null, bestT = 1e9, isCop = false;
     for (const n of this.peds.list) {
-      const px = n.h.root.position.x - ox, pz = n.h.root.position.z - oz;
-      const tdist = px * dx + pz * dz;            // проекция на луч
-      if (tdist < 1 || tdist > bestT) continue;
-      const miss = Math.hypot(px - dx * tdist, pz - dz * tdist);
-      if (miss > 0.7) continue;
-      bestT = tdist; best = n;
+      if (n.state === 'down') continue;
+      const t2 = probe(n.h.root.position.x, n.h.root.position.z);
+      if (t2 && t2 < bestT) { bestT = t2; best = n; }
     }
+    for (const c of this.police.list) {
+      if (c.down) continue;
+      const t2 = probe(c.h.root.position.x, c.h.root.position.z);
+      if (t2 && t2 < bestT) { bestT = t2; best = c; isCop = true; }
+    }
+
+    this.addWanted(isCop ? 2 : 1, 'стрельба');
+    this.peds.scare(p3.pos.x, p3.pos.z, 30);
+
     if (!best) { this.hud.toast(`Мимо · патронов ${this.player.ammo}`); return; }
-    best.speed = 2.6;
-    best.pauseT = 0;
-    best.h.root.position.x += dx * 0.6;
-    best.h.root.position.z += dz * 0.6;
-    this.chat.add(`* Попадание: ${best.name}`, 'sys');
-    this.hud.toast(`Попал по ${best.name} · патронов ${this.player.ammo}`);
-    for (const n of this.peds.list) {
-      if (dist2D(n.h.root.position.x, n.h.root.position.z, p3.pos.x, p3.pos.z) < 25) {
-        n.speed = Math.min(2.6, n.speed * 1.7);
-        n.pauseT = 0;
-      }
+    if (isCop) {
+      const r = this.police.hit(best, 60);
+      this.hud.toast(r === 'down' ? `Патрульный ранен · патронов ${this.player.ammo}`
+        : `Попал в патрульного · патронов ${this.player.ammo}`, 'bad');
+      if (r === 'down') this.addWanted(1.5, 'ранен полицейский');
+      return;
     }
+    const r = this.peds.hit(best, 65, p3.pos.x, p3.pos.z);
+    this.chat.add(`* Попадание: ${best.name}`, 'sys');
+    this.hud.toast(`${r === 'down' ? best.name + ' упал' : 'Попал по ' + best.name} · патронов ${this.player.ammo}`, 'bad');
+    if (r === 'down') this.addWanted(1.5, 'тяжкое');
   }
 
   /** Синхронизирует оружие в руке с инвентарём. */
@@ -817,13 +882,22 @@ class Game {
 
     const px = p3.pos.x, pz = p3.pos.z;
     const fx = Math.sin(p3.heading), fz = Math.cos(p3.heading);
-    let best = null, bd = 2.3;
-    for (const n of this.peds.list) {
-      const dx = n.h.root.position.x - px, dz = n.h.root.position.z - pz;
+    const inFront = (ox, oz) => {
+      const dx = ox - px, dz = oz - pz;
       const d = Math.hypot(dx, dz);
-      if (d > bd || d < 0.01) continue;
-      if ((dx / d) * fx + (dz / d) * fz < 0.35) continue;   // только спереди
-      bd = d; best = n;
+      return d > 0.01 && d <= 2.3 && (dx / d) * fx + (dz / d) * fz > 0.35 ? d : 0;
+    };
+
+    let best = null, bd = 99, isCop = false;
+    for (const n of this.peds.list) {
+      if (n.state === 'down') continue;
+      const d = inFront(n.h.root.position.x, n.h.root.position.z);
+      if (d && d < bd) { bd = d; best = n; }
+    }
+    for (const c of this.police.list) {
+      if (c.down) continue;
+      const d = inFront(c.h.root.position.x, c.h.root.position.z);
+      if (d && d < bd) { bd = d; best = c; isCop = true; }
     }
 
     const stats = this.player.stats;
@@ -831,19 +905,22 @@ class Game {
 
     setTimeout(() => {
       if (!best) { this.hud.toast('Удар в воздух'); return; }
-      // отталкиваем и пугаем
-      best.h.root.position.x += fx * 0.9;
-      best.h.root.position.z += fz * 0.9;
-      best.pauseT = 0;
-      best.speed = Math.min(2.6, best.speed * 1.8);
-      this.chat.add(`* Ты ударил: ${best.name}`, 'sys');
-      this.hud.toast('Попал по ' + best.name);
-      for (const n of this.peds.list) {
-        if (dist2D(n.h.root.position.x, n.h.root.position.z, px, pz) < 14) {
-          n.speed = Math.min(2.6, n.speed * 1.5);
-          n.pauseT = 0;
-        }
+      if (isCop) {
+        const r = this.police.hit(best, 34);
+        this.hud.toast(r === 'down' ? 'Патрульный в нокауте' : 'Ударил полицейского');
+        this.addWanted(r === 'down' ? 2 : 1.2, 'нападение на полицию');
+        return;
       }
+      const r = this.peds.hit(best, 26, px, pz);
+      this.chat.add(`* Ты ударил: ${best.name}`, 'sys');
+      if (r === 'down') {
+        this.hud.toast(`${best.name} в нокауте`, 'bad');
+        this.addWanted(1.6, 'избиение');
+      } else {
+        this.hud.toast(`Попал по ${best.name}` + (r === 'fight' ? ' — он дерётся!' : ''));
+        this.addWanted(0.5, 'драка');
+      }
+      this.peds.scare(px, pz, 14);
     }, p3.punchHitMoment * 1000);
   }
 
@@ -943,7 +1020,23 @@ class Game {
 
     this._streamParked(p3.pos.x, p3.pos.z);
     this.traffic.update(dt, p3.pos.x, p3.pos.z, p3.vehicle, eng.nightAmount);
-    this.peds.update(dt, p3.pos.x, p3.pos.z);
+    this.peds.update(dt, p3.pos.x, p3.pos.z, {
+      onHitPlayer: (n, dmg) => this.hurtPlayer(dmg, n.name)
+    });
+
+    // розыск: затухает, если какое-то время не нарушать
+    if (this._hitMsgCd > 0) this._hitMsgCd -= dt;
+    if (this.wanted > 0) {
+      if (this._crimeCool > 0) this._crimeCool -= dt;
+      else this.wanted = Math.max(0, this.wanted - dt * 0.035);
+      this.police.setMax(Math.min(4, Math.floor(this.wanted)));
+      this.police.update(dt, p3.pos.x, p3.pos.z, {
+        wanted: this.wanted,
+        onHitPlayer: (c, dmg) => this.hurtPlayer(dmg, c.name),
+        onArrest: () => this._arrest()
+      });
+      if (this.wanted === 0) { this.police.setMax(0); this.police.dispose(); }
+    }
     this.net.update(dt);
     this.chat.ambient(dt);
 
@@ -971,7 +1064,7 @@ class Game {
     }
 
     // UI
-    this.hud.update(p, eng, p3);
+    this.hud.update(p, eng, p3, { wanted: this.wanted, ammo: p.ammo, armed: p.equipped === 'pistol' });
     this.hud.showSpeedo(driving);
     if (driving) {
       this.hud.drawSpeedo(p3.vehicle);
