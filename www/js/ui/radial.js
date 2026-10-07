@@ -12,6 +12,7 @@ export const RADIAL_ITEMS = [
   { id: 'quests',     icon: '⭐', label: 'Задания' },
   { id: 'phone',      icon: '📱', label: 'Телефон' },
   { id: 'bank',       icon: '🏦', label: 'Банк' },
+  { id: 'chat',       icon: '💬', label: 'Чат' },
   { id: 'settings',   icon: '⚙', label: 'Настройки' }
 ];
 
@@ -22,7 +23,7 @@ export class RadialMenu {
     this.core = $('radial-btn');
     this.list = $('radial-items');
     this.open = false;
-    this.radius = 118;
+    this.radius = 126;
 
     this._build();
 
@@ -78,7 +79,14 @@ export class RadialMenu {
     const g = this.game;
     if (!g.player) { g.hud && g.hud.toast('Сначала начни игру'); return; }
     if (id === 'map') { g.openMap ? g.openMap() : g.bigmap.show(); return; }
+    if (id === 'chat') { g.chat.toggleInput(); return; }
     g.panels.open(id);
+  }
+
+  /** Подсвечивает пункт, панель которого открыта. */
+  setActive(id) {
+    if (!this.buttons) return;
+    for (const b of this.buttons) b.classList.toggle('active', b.dataset.id === id);
   }
 
   setVisible(on) {

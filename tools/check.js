@@ -80,6 +80,11 @@ group('Файлы проекта', () => {
   const panels = fs.readFileSync(path.join(WWW, 'js/ui/panels.js'), 'utf8');
   ok('в настройках есть режим Авто', /'AUTO', 'LOW', 'MEDIUM', 'HIGH'/.test(panels));
   ok('в настройках выбирается минимальный fps', /rp:targetFps/.test(panels));
+  ok('в настройках есть чёткость картинки', /setSharpness/.test(panels));
+  ok('нижней панели больше нет', !/dock/.test(html) && !/dock-btn/.test(panels));
+  ok('чат в радиальном меню', /id: 'chat'/.test(fs.readFileSync(path.join(WWW, 'js/ui/radial.js'), 'utf8')));
+  ok('разрешение не падает ниже 0.85', /Math\.max\(0\.85/.test(eng));
+  ok('сглаживание включено', /antialias: true/.test(eng));
 
   const ch = fs.readFileSync(path.join(WWW, 'js/entities/character.js'), 'utf8');
   ok('модели персонажей — гражданские', /models\/male\.glb/.test(ch) && /models\/female\.glb/.test(ch));

@@ -368,9 +368,23 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   ok('радиальное меню слева', radial.onLeft);
   ok('радиальное меню по центру по вертикали', radial.centered);
   ok('меню раскрывается', radial.opened);
-  ok('в меню 8 пунктов', radial.items === 8, String(radial.items));
+  ok('в меню 9 пунктов', radial.items === 9, String(radial.items));
   ok('пункт открывает панель', radial.panelOpen, radial.title);
   ok('после выбора меню закрывается', radial.closed);
+
+  const sharp = await page.evaluate(() => {
+    const g = window.__game;
+    const dock = document.querySelector('.dock');
+    const pr = g.engine.renderer.getPixelRatio();
+    g.engine.setSharpness(1.25);
+    const pr2 = g.engine.renderer.getPixelRatio();
+    g.engine.setSharpness(1);
+    return { dock: !!dock, pr, pr2 };
+  });
+  console.log('    ' + JSON.stringify(sharp));
+  ok('нижняя панель убрана', sharp.dock === false);
+  ok('разрешение не ниже 0.85', sharp.pr >= 0.85, String(sharp.pr));
+  ok('чёткость регулируется', sharp.pr2 > sharp.pr, `${sharp.pr} → ${sharp.pr2}`);
 
   console.log('\n\u001b[1mМодель игрока\u001b[0m');
   const model = await page.evaluate(async () => {

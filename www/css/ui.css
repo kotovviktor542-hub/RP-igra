@@ -89,18 +89,18 @@ input{font-family:inherit}
 .sbar .fill{height:100%;border-radius:99px;transition:width .3s,background .3s}
 
 /* миникарта */
-.minimap-wrap{position:absolute;bottom:calc(var(--sb) + 76px);right:calc(var(--sr) + 12px);
+.minimap-wrap{position:absolute;bottom:calc(var(--sb) + 152px);right:calc(var(--sr) + 12px);
   width:118px;height:118px;border-radius:50%;overflow:hidden;border:2px solid rgba(255,255,255,.22);
   box-shadow:0 6px 20px rgba(0,0,0,.6);background:#0a1018}
 #minimap{width:100%;height:100%;display:block}
 .minimap-ring{position:absolute;inset:0;border-radius:50%;pointer-events:none;
   box-shadow:inset 0 0 22px rgba(0,0,0,.75)}
-.mm-street{position:absolute;bottom:calc(var(--sb) + 60px);right:calc(var(--sr) + 12px);
+.mm-street{position:absolute;bottom:calc(var(--sb) + 136px);right:calc(var(--sr) + 12px);
   width:118px;text-align:center;font-size:10px;color:var(--muted);background:rgba(8,12,20,.7);
   border-radius:7px;padding:2px 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 /* спидометр */
-.speedo{position:absolute;bottom:calc(var(--sb) + 72px);left:calc(var(--sl) + 12px);width:118px;height:118px}
+.speedo{position:absolute;bottom:calc(var(--sb) + 150px);left:calc(var(--sl) + 12px);width:118px;height:118px}
 #speedo-canvas{width:100%;height:100%;display:block}
 .speedo-val{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
   pointer-events:none;font-variant-numeric:tabular-nums}
@@ -112,7 +112,7 @@ input{font-family:inherit}
 .speedo-fuel span{font-size:9px;color:var(--muted)}
 
 /* подсказка */
-.prompt{position:absolute;bottom:calc(var(--sb) + 210px);left:50%;transform:translateX(-50%);
+.prompt{position:absolute;bottom:calc(var(--sb) + 196px);left:50%;transform:translateX(-50%);
   background:rgba(8,12,20,.86);border:1px solid var(--line2);border-radius:12px;
   padding:10px 16px;font-size:13px;white-space:nowrap;backdrop-filter:blur(8px);
   box-shadow:0 4px 16px rgba(0,0,0,.5)}
@@ -138,7 +138,7 @@ input{font-family:inherit}
 .tracker-dist{font-size:11px;color:var(--muted);margin-top:3px}
 
 /* чат */
-.chat{position:absolute;left:calc(var(--sl) + 12px);bottom:calc(var(--sb) + 200px);width:min(330px,56vw);
+.chat{position:absolute;left:calc(var(--sl) + 104px);bottom:calc(var(--sb) + 150px);width:min(330px,56vw);
   display:flex;flex-direction:column;gap:6px;pointer-events:none}
 .chat-log{display:flex;flex-direction:column;gap:3px;max-height:150px;overflow:hidden;justify-content:flex-end}
 .chat-line{font-size:12px;line-height:1.4;background:rgba(5,8,14,.6);padding:3px 8px;border-radius:7px;
@@ -154,13 +154,13 @@ input{font-family:inherit}
 
 /* сенсорное управление */
 .touch{position:absolute;inset:0;pointer-events:none}
-.stick{position:absolute;left:calc(var(--sl) + 20px);bottom:calc(var(--sb) + 78px);
+.stick{position:absolute;left:calc(var(--sl) + 20px);bottom:calc(var(--sb) + 22px);
   width:124px;height:124px;border-radius:50%;background:rgba(255,255,255,.055);
   border:2px solid rgba(255,255,255,.13);pointer-events:auto;touch-action:none}
 .stick-knob{position:absolute;left:50%;top:50%;width:52px;height:52px;margin:-26px 0 0 -26px;
   border-radius:50%;background:rgba(255,255,255,.28);border:2px solid rgba(255,255,255,.45);
   box-shadow:0 2px 10px rgba(0,0,0,.5)}
-.buttons{position:absolute;right:calc(var(--sr) + 16px);bottom:calc(var(--sb) + 76px);
+.buttons{position:absolute;right:calc(var(--sr) + 16px);bottom:calc(var(--sb) + 20px);
   display:grid;grid-template-columns:repeat(3,1fr);gap:8px;pointer-events:auto;width:200px}
 .rb{width:60px;height:60px;border-radius:50%;background:rgba(255,255,255,.1);
   border:2px solid rgba(255,255,255,.18);font-size:13px;font-weight:800;color:#fff;
@@ -169,12 +169,6 @@ input{font-family:inherit}
 .rb.small{width:52px;height:52px;font-size:10px}
 
 /* док */
-.dock{position:absolute;bottom:0;left:0;right:0;display:flex;background:rgba(6,9,15,.92);
-  border-top:1px solid var(--line);padding-bottom:var(--sb);backdrop-filter:blur(12px)}
-.dock-btn{flex:1;display:flex;flex-direction:column;align-items:center;gap:1px;
-  padding:7px 2px 6px;font-size:17px;color:var(--muted)}
-.dock-btn span{font-size:9px;letter-spacing:.4px}
-.dock-btn.active{color:var(--acc)}
 
 /* ---------- панели ---------- */
 .panel{position:fixed;z-index:30;left:0;right:0;bottom:0;max-height:76vh;
@@ -231,8 +225,8 @@ input{font-family:inherit}
 /* на ПК прячем сенсорное управление */
 @media(hover:hover) and (pointer:fine){
   .touch{display:none}
-  .chat{bottom:calc(var(--sb) + 80px)}
-  .prompt{bottom:calc(var(--sb) + 110px)}
+  .chat{bottom:calc(var(--sb) + 120px)}
+  .prompt{bottom:calc(var(--sb) + 92px)}
 }
 
 /* ======= ГОРИЗОНТАЛЬНЫЙ РЕЖИМ ======= */
@@ -306,3 +300,6 @@ input{font-family:inherit}
   .radial-item .ri-ic { font-size: 16px; }
   .radial-item .ri-lb { font-size: 7.5px; }
 }
+
+.radial-item.active { border-color: rgba(255,179,0,.6); background: rgba(255,179,0,.16); }
+.radial-item.active .ri-lb { color: #ffd166; }

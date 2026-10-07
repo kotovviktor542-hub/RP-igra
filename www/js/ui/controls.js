@@ -92,7 +92,6 @@ export class Controls {
     $('b-horn').addEventListener('click', () => this.game.horn());
     $('b-light').addEventListener('click', () => this.game.toggleLights());
 
-    $('dock-chat').addEventListener('click', () => this.game.chat.toggleInput());
   }
 
   /* ---------- клавиатура ---------- */
@@ -131,7 +130,7 @@ export class Controls {
 
     const isUI = t => {
       const el = document.elementFromPoint(t.clientX, t.clientY);
-      return el && el.closest && el.closest('.touch, .dock, .panel, .overlay, .minimap-wrap, .speedo, .chat-input-row');
+      return el && el.closest && el.closest('.touch, .radial, .panel, .overlay, .minimap-wrap, .speedo, .chat-input-row');
     };
 
     canvas.addEventListener('touchstart', e => {

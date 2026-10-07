@@ -28,15 +28,12 @@ export class Panels {
     this.current = null;
     $('panel-close').addEventListener('click', () => this.close());
 
-    document.querySelectorAll('.dock-btn[data-panel]').forEach(b => {
-      b.addEventListener('click', () => this.toggle(b.dataset.panel));
-    });
   }
 
   close() {
     this.root.classList.add('hidden');
     this.current = null;
-    document.querySelectorAll('.dock-btn').forEach(b => b.classList.remove('active'));
+    if (this.game.radial) this.game.radial.setActive(null);
   }
 
   toggle(name, arg) {
@@ -48,8 +45,7 @@ export class Panels {
     this.current = name;
     this.root.classList.remove('hidden');
     this.body.scrollTop = 0;
-    document.querySelectorAll('.dock-btn').forEach(b =>
-      b.classList.toggle('active', b.dataset.panel === name));
+    if (this.game.radial) this.game.radial.setActive(name);
 
     const fn = this['render_' + name];
     if (fn) fn.call(this, arg);
@@ -427,6 +423,16 @@ export class Panels {
       <div class="d">Авто поднимает графику до максимума, пока держится ${eng.targetFps}+ fps,
       и снижает, если просело. Тени, дальность, трафик и чёткость подбираются сами.</div></div>`;
     b.appendChild(info);
+
+    b.appendChild(el('div', 'sec', 'Чёткость картинки'));
+    const sharpSeg = el('div', 'seg');
+    [['Мягко', 0.85], ['Норма', 1], ['Чётко', 1.25], ['Макс', 1.5]].forEach(([label, v]) => {
+      const btn = el('button', 'seg-btn' + (Math.abs(eng.sharpness - v) < 0.01 ? ' active' : ''), label);
+      btn.onclick = () => { eng.setSharpness(v); this.refresh(); };
+      sharpSeg.appendChild(btn);
+    });
+    b.appendChild(sharpSeg);
+    b.appendChild(el('div', 'd', '<div class="d" style="margin-top:6px">Если картинка кажется мыльной — поставь «Чётко». Это нагружает видео сильнее.</div>'));
 
     b.appendChild(el('div', 'sec', 'Минимальный FPS'));
     const fpsSeg = el('div', 'seg');

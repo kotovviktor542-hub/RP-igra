@@ -8,14 +8,14 @@ import * as THREE from '../../vendor/three.module.js';
  * и опускается, если просел. Цель — «максимум графики при fps >= 45».
  */
 export const LEVELS = [
-  { lv: 0, shadow: 0,    pr: 1.0, scale: 0.60, far: 200, fog: 130, npc: 6,  traffic: 6,  chunkR: 110, props: 0 },
-  { lv: 1, shadow: 0,    pr: 1.0, scale: 0.72, far: 230, fog: 150, npc: 8,  traffic: 7,  chunkR: 130, props: 0 },
-  { lv: 2, shadow: 0,    pr: 1.2, scale: 0.85, far: 270, fog: 185, npc: 10, traffic: 9,  chunkR: 150, props: 1 },
-  { lv: 3, shadow: 1024, pr: 1.2, scale: 0.82, far: 320, fog: 215, npc: 13, traffic: 11, chunkR: 175, props: 1 },
-  { lv: 4, shadow: 1024, pr: 1.3, scale: 0.92, far: 400, fog: 270, npc: 18, traffic: 14, chunkR: 215, props: 1 },
+  { lv: 0, shadow: 0,    pr: 1.0, scale: 0.85, far: 190, fog: 125, npc: 5,  traffic: 5,  chunkR: 105, props: 0 },
+  { lv: 1, shadow: 0,    pr: 1.15, scale: 1.00, far: 230, fog: 150, npc: 7,  traffic: 7,  chunkR: 130, props: 0 },
+  { lv: 2, shadow: 0,    pr: 1.25, scale: 1.00, far: 280, fog: 190, npc: 10, traffic: 9,  chunkR: 155, props: 1 },
+  { lv: 3, shadow: 1024, pr: 1.35, scale: 1.00, far: 330, fog: 220, npc: 13, traffic: 11, chunkR: 180, props: 1 },
+  { lv: 4, shadow: 1024, pr: 1.5, scale: 1.00, far: 400, fog: 270, npc: 18, traffic: 14, chunkR: 215, props: 1 },
   { lv: 5, shadow: 1536, pr: 1.5, scale: 1.00, far: 470, fog: 320, npc: 24, traffic: 18, chunkR: 250, props: 2 },
-  { lv: 6, shadow: 2048, pr: 1.6, scale: 1.00, far: 560, fog: 380, npc: 28, traffic: 22, chunkR: 290, props: 2 },
-  { lv: 7, shadow: 2048, pr: 2.0, scale: 1.00, far: 650, fog: 430, npc: 34, traffic: 26, chunkR: 330, props: 2 }
+  { lv: 6, shadow: 2048, pr: 2.0, scale: 1.00, far: 560, fog: 380, npc: 28, traffic: 22, chunkR: 290, props: 2 },
+  { lv: 7, shadow: 2048, pr: 3.0, scale: 1.00, far: 650, fog: 430, npc: 34, traffic: 26, chunkR: 330, props: 2 }
 ];
 
 export const QUALITY = {
@@ -60,11 +60,16 @@ export class Engine {
 
     this.renderer = new THREE.WebGLRenderer({
       canvas,
-      antialias: this.quality.aa,
+      antialias: true,              // MSAA: на телефонных GPU дешёвый, убирает «лесенку»
       powerPreference: 'high-performance',
       stencil: false
     });
     this.renderScale = this.quality.scale;      // адаптивное разрешение
+    this.sharpness = 1;
+    try {
+      const s = parseFloat(localStorage.getItem('rp:sharp') || '1');
+      if (s >= 0.8 && s <= 1.5) this.sharpness = s;
+    } catch { /* ignore */ }
     this.adaptive = true;
     this._applyPixelRatio();
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -91,8 +96,18 @@ export class Engine {
 
   /** Пиксель-рейт = devicePixelRatio, ограниченный качеством и масштабом рендера. */
   _applyPixelRatio() {
-    const pr = Math.min(window.devicePixelRatio || 1, this.quality.pr) * this.renderScale;
-    this.renderer.setPixelRatio(Math.max(0.45, pr));
+    const dpr = window.devicePixelRatio || 1;
+    const pr = Math.min(dpr, this.quality.pr) * this.renderScale * this.sharpness;
+    // ниже 0.85 CSS-пикселя не опускаемся — иначе картинка «мылится»
+    this.renderer.setPixelRatio(Math.max(0.85, Math.min(dpr * 1.2, pr)));
+  }
+
+  /** Ручной множитель чёткости (0.85…1.5), сохраняется между запусками. */
+  setSharpness(v) {
+    this.sharpness = Math.max(0.8, Math.min(1.5, v));
+    try { localStorage.setItem('rp:sharp', String(this.sharpness)); } catch { /* ignore */ }
+    this._applyPixelRatio();
+    this.resize();
   }
 
   /** Принудительно задать масштаб рендера (1 = полное разрешение экрана). */
@@ -343,7 +358,7 @@ export class Engine {
     if (!this.auto) {
       // в ручных пресетах подкручиваем только разрешение
       if (now - this._lastScaleAt < 2500) return;
-      const min = 0.55, max = this.quality.scale;
+      const min = 0.85, max = this.quality.scale;
       if (this._lowStreak >= 2 && this.renderScale > min) this.renderScale = Math.max(min, this.renderScale - 0.1);
       else if (this._highStreak >= 5 && this.renderScale < max) this.renderScale = Math.min(max, this.renderScale + 0.05);
       else return;
