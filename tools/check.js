@@ -125,6 +125,27 @@ group('Файлы проекта', () => {
   ok('общая библиотека анимаций', /models\/anims\.glb/.test(ch));
   ok('рост подгоняется под персонажа', /Box3/.test(ch));
 
+  const cfg = fs.readFileSync(path.join(WWW, 'js/net/config.js'), 'utf8');
+  const authJs = fs.readFileSync(path.join(WWW, 'js/net/auth.js'), 'utf8');
+  const onlineJs = fs.readFileSync(path.join(WWW, 'js/ui/online.js'), 'utf8');
+  const netJs = fs.readFileSync(path.join(WWW, 'js/net/client.js'), 'utf8');
+  const srvJs = fs.readFileSync(path.join(ROOT, 'server', 'server.js'), 'utf8');
+  ok('в меню главная кнопка — онлайн', /id="btn-online"[^>]*class="btn primary"/.test(html));
+  ok('оффлайн остался как тренировка', /Тренировка \(оффлайн\)/.test(html));
+  ok('есть экран онлайна', /id="online"/.test(html) && /OnlineScreen/.test(mainJs));
+  ok('список серверов настраивается', /OFFICIAL_SERVERS/.test(cfg) && /addCustomServer/.test(cfg));
+  ok('серверы пингуются по /status', /statusUrl/.test(cfg) && /fetch\(statusUrl/.test(onlineJs));
+  ok('вход: Google, ник, гость', /signInGoogle/.test(authJs) && /signInNick/.test(authJs) && /signInGuest/.test(authJs));
+  ok('Google-токен идёт на сервер', /token: resp\.credential/.test(authJs) && /authMessage/.test(authJs) && /this\.game\.auth\.authMessage/.test(netJs));
+  ok('клиент авторизуется до входа в мир', /case 'auth'/.test(netJs) && /this\.authorized = true/.test(netJs));
+  ok('сервер проверяет Google-токен', /oauth2\.googleapis\.com\/tokeninfo/.test(srvJs) && /info\.aud !== GOOGLE_CLIENT_ID/.test(srvJs));
+  ok('сервер хранит аккаунты и сейвы', /accounts\.json/.test(srvJs) && /t === 'save'/.test(srvJs));
+  ok('сервер отдаёт /health и CORS', /\/health/.test(srvJs) && /Access-Control-Allow-Origin/.test(srvJs));
+  ok('облачное автосохранение в игре', /net\.pushSave/.test(mainJs) && /pushSave/.test(netJs));
+  ok('есть инструкции по деплою и Google',
+    fs.existsSync(path.join(ROOT, 'server', 'DEPLOY.md')) &&
+    fs.existsSync(path.join(ROOT, 'server', 'GOOGLE.md')));
+
   const cityJs = fs.readFileSync(path.join(WWW, 'js/world/city.js'), 'utf8');
   ok('коллайдеры в пространственной сетке', /SpatialGrid/.test(cityJs));
 

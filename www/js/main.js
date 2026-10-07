@@ -15,6 +15,8 @@ import { Panels } from './ui/panels.js';
 import { Chat } from './ui/chat.js';
 import { BigMap } from './ui/map.js';
 import { Creator } from './ui/creator.js';
+import { OnlineScreen } from './ui/online.js';
+import { Auth } from './net/auth.js';
 import { Controls } from './ui/controls.js';
 import { RadialMenu } from './ui/radial.js';
 import { preloadCharacters } from './entities/character.js';
@@ -121,10 +123,15 @@ class Game {
     this.wanted = 0;            // уровень розыска 0…5
     this._crimeCool = 0;
 
+    this.auth = new Auth();
+    this.pendingServer = null;      // {url, name} — куда заходим после создания персонажа
+
     this.creator = new Creator(
       data => this.startNewGame(data),
       () => $('menu').classList.remove('hidden')
     );
+
+    this.online = new OnlineScreen(this, this.auth);
 
     lockLandscape();
     watchOrientation($('rotate'));
@@ -147,8 +154,13 @@ class Game {
       if (!d) { this.hud.toast('Сохранение не найдено', 'bad'); return; }
       this.loadGame(d);
     });
+    $('btn-online').addEventListener('click', () => {
+      $('menu').classList.add('hidden');
+      this.online.show();
+    });
     $('btn-new').addEventListener('click', () => {
       $('menu').classList.add('hidden');
+      this.pendingServer = null;
       this.creator.show();
     });
     $('btn-servers').addEventListener('click', () => {
@@ -173,6 +185,43 @@ class Game {
       this.hud.show();
       this.panels.open('settings');
     });
+  }
+
+  /**
+   * Заход на сервер: если персонажа ещё нет — сперва создание,
+   * затем подключение и синхронизация профиля с сервером.
+   */
+  joinServer(url, name) {
+    this.pendingServer = { url, name };
+    if (!this.player) {
+      const saved = S.load();
+      if (saved) this.loadGame(saved);
+      else {
+        this.hud.toast('Создай персонажа для сервера');
+        this.creator.show();
+        return;
+      }
+    } else {
+      this._enterWorld();
+    }
+    this.hud.show();
+    this.connectServer(url);
+  }
+
+  /** Сервер подтвердил аккаунт: подтягиваем облачное сохранение. */
+  onServerAuth(m) {
+    this.serverAccount = { kind: m.kind, nick: m.nick, guest: !!m.guest };
+    const ok = m.save && typeof m.save === 'object' && m.save.stats && m.save.inventory;
+    if (ok) {
+      try {
+        this.loadGame(m.save);
+        this.hud.toast('Профиль загружен с сервера', 'good');
+      } catch (e) {
+        this.hud.toast('Профиль с сервера повреждён, играю с локальным', 'bad');
+      }
+    } else if (this.player) {
+      this.net.pushSave(this.player);      // первый вход — заливаем свой профиль
+    }
   }
 
   /** Проверка обновления. loud=true — показывать результат всегда. */
@@ -212,6 +261,7 @@ class Game {
     this.chat.add(`Добро пожаловать в город, ${this.player.name}!`, 'sys');
     this.hud.toast('Новая жизнь начинается', 'good');
     this._giveStarterKit();
+    if (this.pendingServer) this.connectServer(this.pendingServer.url);
   }
 
   loadGame(saveData) {
@@ -1088,7 +1138,11 @@ class Game {
 
     // автосохранение
     this._saveAcc += dt;
-    if (this._saveAcc > 30) { this._saveAcc = 0; this.saveGame(false); }
+    if (this._saveAcc > 30) {
+      this._saveAcc = 0;
+      this.saveGame(false);
+      if (this.net.authorized) this.net.pushSave(this.player);
+    }
   }
 
   _mapMarkers() {

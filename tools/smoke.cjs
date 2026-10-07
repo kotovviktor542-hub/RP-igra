@@ -346,6 +346,39 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   ok('на дне лестницы короткая прорисовка', gov.far <= 230, String(gov.far));
   ok('населённость подстроилась', gov.traffic <= 8 && gov.peds <= 9, `${gov.traffic}/${gov.peds}`);
 
+  console.log('\n\u001b[1mОнлайн: аккаунт и серверы\u001b[0m');
+  const onl = await page.evaluate(async () => {
+    const g = window.__game;
+    const res = {};
+    g.online.show();
+    res.opened = !document.getElementById('online').classList.contains('hidden');
+    res.hasGoogleBtn = /Google/.test(document.getElementById('online-body').textContent);
+    res.googleDisabled = !!Array.from(document.querySelectorAll('#online-body button'))
+      .find(b => /Google/.test(b.textContent) && b.disabled);
+    g.auth.signInGuest('Смоук');
+    g.online.render();
+    res.signedIn = g.auth.signedIn && g.auth.account.kind === 'guest';
+    res.accountShown = /Смоук/.test(document.getElementById('online-body').textContent);
+    const r = g.auth.signInNick('Тестер', '12345');
+    res.nickOk = r.ok === true;
+    res.nickShort = g.auth.signInNick('ab', '12345').ok === false;
+    res.passShort = g.auth.signInNick('Тестер', '1').ok === false;
+    res.authMsg = g.auth.authMessage().t === 'auth' && g.auth.authMessage().kind === 'nick';
+    g.online.hide();
+    res.closed = document.getElementById('online').classList.contains('hidden');
+    g.auth.signOut();
+    return res;
+  });
+  console.log('    ' + JSON.stringify(onl));
+  ok('экран онлайна открывается', onl.opened === true);
+  ok('есть вход через Google', onl.hasGoogleBtn === true);
+  ok('Google выключен без Client ID', onl.googleDisabled === true);
+  ok('вход гостем работает', onl.signedIn === true && onl.accountShown === true);
+  ok('регистрация по нику работает', onl.nickOk === true);
+  ok('короткий ник и пароль отбиваются', onl.nickShort === true && onl.passShort === true);
+  ok('клиент шлёт авторизацию серверу', onl.authMsg === true);
+  ok('экран онлайна закрывается', onl.closed === true);
+
   console.log('\n\u001b[1mКнопки принимают касания\u001b[0m');
   const hit = await page.evaluate(() => {
     const ids = ['b-punch', 'b-aim', 'b-jump', 'b-action', 'b-run', 'radial-btn'];

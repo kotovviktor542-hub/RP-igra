@@ -17,3 +17,5 @@ npm-debug.log*
 local.properties
 package-lock.json
 shots/
+server/data/
+server/.testdata/

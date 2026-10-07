@@ -1,0 +1,85 @@
+# Как поднять сервер Horizons RP (бесплатно, ~10 минут)
+
+Сервер — это папка `server/` в этом репозитории. Внутри: `server.js` (WebSocket + HTTP),
+`package.json`, `render.yaml` (конфиг для Render), `Dockerfile` (если захочешь другой хостинг).
+
+Бесплатный тариф Render засыпает после 15 минут простоя и просыпается за ~30 секунд при первом
+запросе. Для игры с друзьями этого хватает.
+
+---
+
+## Вариант А. Render.com (рекомендую)
+
+1. **Регистрация.** Зайди на https://render.com → *Get Started* → войди через GitHub
+   (тем же аккаунтом `kotovviktor542-hub`, чтобы Render увидел репозиторий).
+
+2. **Создать сервис.** Кнопка *New +* → **Web Service** → выбери репозиторий `RP-igra`
+   → *Connect*.
+
+3. **Настройки** (если Render не подхватит `render.yaml` сам):
+   - **Name**: `horizons-rp-server`
+   - **Root Directory**: `server`
+   - **Runtime**: Node
+   - **Build Command**: `npm install`
+   - **Start Command**: `node server.js`
+   - **Instance Type**: Free
+   - **Health Check Path**: `/health`
+
+4. **Переменные окружения** (вкладка *Environment* → *Add Environment Variable*):
+   | Ключ | Значение |
+   |---|---|
+   | `SERVER_NAME` | `Horizons RP — официальный` |
+   | `MAX_PLAYERS` | `64` |
+   | `SEED` | `20261007` |
+   | `GOOGLE_CLIENT_ID` | (добавишь позже, см. `GOOGLE.md`) |
+
+   Порт задавать не нужно — Render передаёт его сам через `PORT`.
+
+5. **Deploy.** Нажми *Create Web Service* и подожди 2–3 минуты. Когда статус станет **Live**,
+   вверху будет адрес вида `https://horizons-rp-server.onrender.com`.
+
+6. **Проверка.** Открой в браузере `https://<твой-адрес>/status` — должен прийти JSON вида
+   `{"server":"Horizons RP — официальный","online":0,"max":64,...}`.
+
+7. **Пришли мне адрес.** Я подставлю его в игру (`www/js/net/config.js` → `OFFICIAL_SERVERS`),
+   и сервер появится в списке у всех игроков. В игре адрес пишется через `wss://`:
+   `wss://horizons-rp-server.onrender.com`.
+
+До этого адрес можно вбить руками: **Меню → Играть онлайн → Свой сервер → Подключиться**.
+
+---
+
+## Вариант Б. Railway
+
+1. https://railway.app → *Login with GitHub* → *New Project* → *Deploy from GitHub repo* → `RP-igra`.
+2. В настройках сервиса: **Root Directory** = `server`, **Start Command** = `node server.js`.
+3. Variables: те же, что в таблице выше.
+4. *Settings → Networking → Generate Domain* — получишь адрес `https://...up.railway.app`,
+   в игре вводи его как `wss://...up.railway.app`.
+
+---
+
+## Вариант В. Свой компьютер / VPS (для теста по Wi-Fi)
+
+```bash
+cd server
+npm install
+npm start
+```
+Сервер поднимется на порту `8787`. Узнай локальный IP (`ipconfig` / `ip a`) и в игре введи
+`ws://192.168.х.х:8787`. Телефон и компьютер должны быть в одной сети.
+
+На VPS с доменом и HTTPS (nginx + certbot) адрес будет `wss://твой-домен`.
+
+---
+
+## Что сервер умеет
+
+- синхронизация игроков: позиция, поворот, анимация, транспорт, чат;
+- аккаунты: **Google**, **ник + пароль**, **гость** (гость не сохраняется на сервере);
+- облачные сохранения: профиль (деньги, уровень, инвентарь, машины, квартиры) хранится
+  на сервере в `server/data/accounts.json` и подтягивается при входе с любого телефона;
+- `/status` и `/health` — статус для списка серверов в игре.
+
+⚠ На бесплатном Render диск **временный**: при передеплое файл `accounts.json` может обнулиться.
+Для постоянного хранения нужен платный диск или внешняя БД — скажи, подключу.

@@ -17,6 +17,7 @@ export class NetClient {
     this.id = null;
     this.players = new Map();     // id -> {name, look, x, z, rot, anim, avatar, ...}
     this.lastUrl = '';
+    this.authorized = false;
     this._acc = 0;
   }
 
@@ -35,13 +36,10 @@ export class NetClient {
 
     this.ws.onopen = () => {
       this.connected = true;
-      this.send({
-        t: 'join',
-        name: this.game.player.name,
-        look: this.game.player.look
-      });
-      this.game.hud.toast('Подключено к серверу', 'good');
-      this.game.chat.add('Соединение с сервером установлено.', 'sys');
+      this.authorized = false;
+      this.game.hud.toast('Подключено, вхожу в аккаунт…');
+      // сначала авторизация, join отправим после ответа сервера
+      this.send(this.game.auth.authMessage());
     };
 
     this.ws.onmessage = ev => {
@@ -71,6 +69,7 @@ export class NetClient {
       this.ws = null;
     }
     this.connected = false;
+    this.authorized = false;
     this._clearPlayers();
   }
 
@@ -79,8 +78,35 @@ export class NetClient {
     try { this.ws.send(JSON.stringify(obj)); } catch (e) { /* no-op */ }
   }
 
+  /** Отправляет серверу профиль игрока (облачное сохранение). */
+  pushSave(data) {
+    if (!this.authorized) return;
+    this.send({ t: 'save', data });
+  }
+
   _handle(m) {
     switch (m.t) {
+      case 'auth':
+        if (!m.ok) {
+          this.game.hud.toast('Вход отклонён: ' + (m.reason || 'ошибка'), 'bad');
+          this.disconnect();
+          break;
+        }
+        this.authorized = true;
+        this.serverName = m.server || 'Сервер';
+        this.game.hud.toast(m.registered ? 'Аккаунт создан на сервере' : 'Вход выполнен', 'good');
+        this.game.onServerAuth(m);
+        this.send({
+          t: 'join',
+          name: this.game.player.name,
+          look: this.game.player.look
+        });
+        break;
+
+      case 'saved':
+        this.game._cloudSavedAt = m.at;
+        break;
+
       case 'welcome':
         this.id = m.id;
         this.serverName = m.server || 'Сервер';
