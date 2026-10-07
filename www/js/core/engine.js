@@ -2,35 +2,61 @@
 
 import * as THREE from '../../vendor/three.module.js';
 
+/**
+ * Лестница качества: 0 — максимально дёшево, 7 — максимум красоты.
+ * Режим AUTO сам поднимается по лестнице, пока fps держится выше порога,
+ * и опускается, если просел. Цель — «максимум графики при fps >= 45».
+ */
+export const LEVELS = [
+  { lv: 0, shadow: 0,    pr: 1.0, scale: 0.60, far: 200, fog: 130, npc: 6,  traffic: 6,  chunkR: 110, props: 0 },
+  { lv: 1, shadow: 0,    pr: 1.0, scale: 0.72, far: 230, fog: 150, npc: 8,  traffic: 7,  chunkR: 130, props: 0 },
+  { lv: 2, shadow: 0,    pr: 1.2, scale: 0.85, far: 270, fog: 185, npc: 10, traffic: 9,  chunkR: 150, props: 1 },
+  { lv: 3, shadow: 1024, pr: 1.2, scale: 0.82, far: 320, fog: 215, npc: 13, traffic: 11, chunkR: 175, props: 1 },
+  { lv: 4, shadow: 1024, pr: 1.3, scale: 0.92, far: 400, fog: 270, npc: 18, traffic: 14, chunkR: 215, props: 1 },
+  { lv: 5, shadow: 1536, pr: 1.5, scale: 1.00, far: 470, fog: 320, npc: 24, traffic: 18, chunkR: 250, props: 2 },
+  { lv: 6, shadow: 2048, pr: 1.6, scale: 1.00, far: 560, fog: 380, npc: 28, traffic: 22, chunkR: 290, props: 2 },
+  { lv: 7, shadow: 2048, pr: 2.0, scale: 1.00, far: 650, fog: 430, npc: 34, traffic: 26, chunkR: 330, props: 2 }
+];
+
 export const QUALITY = {
-  LOW:    { shadow: 0,    pr: 1.0,  far: 230, fog: 150, aa: false, npc: 8,  traffic: 7,  chunkR: 130, scale: 0.72, props: 0 },
-  MEDIUM: { shadow: 1024, pr: 1.25, far: 400, fog: 270, aa: false, npc: 18, traffic: 14, chunkR: 215, scale: 0.9, props: 1 },
-  HIGH:   { shadow: 2048, pr: 1.6,  far: 650, fog: 430, aa: true,  npc: 34, traffic: 26, chunkR: 330, scale: 1.0, props: 2 }
+  LOW: LEVELS[1],
+  MEDIUM: LEVELS[4],
+  HIGH: LEVELS[7],
+  AUTO: LEVELS[4]
 };
 
-/** Телефон/планшет? На таких устройствах по умолчанию включаем низкое качество. */
+/** Телефон/планшет? */
 export function isMobileDevice() {
   const coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
   const ua = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '');
   return coarse || ua;
 }
 
-/** Качество по умолчанию: сохранённое пользователем, иначе по типу устройства. */
+/** Режим по умолчанию — AUTO: графика на максимум, но не ниже целевого fps. */
 export function defaultQuality() {
   try {
     const saved = localStorage.getItem('rp:quality');
-    if (saved && QUALITY[saved]) return saved;
+    if (saved && (QUALITY[saved] || saved === 'AUTO')) return saved;
   } catch { /* ignore */ }
-  const mem = navigator.deviceMemory || 4;
-  if (isMobileDevice()) return mem >= 6 ? 'MEDIUM' : 'LOW';
-  return 'HIGH';
+  return 'AUTO';
 }
 
 export class Engine {
-  constructor(canvas, qualityName = 'MEDIUM') {
+  constructor(canvas, qualityName = 'AUTO') {
     this.canvas = canvas;
-    this.quality = QUALITY[qualityName] || QUALITY.MEDIUM;
     this.qualityName = qualityName;
+    this.auto = qualityName === 'AUTO';
+    // в авто-режиме стартуем со среднего на телефоне и с высокого на ПК
+    this.level = this.auto ? (isMobileDevice() ? 3 : 6)
+      : LEVELS.indexOf(QUALITY[qualityName] || QUALITY.MEDIUM);
+    if (this.level < 0) this.level = 4;
+    this.quality = LEVELS[this.level];
+    this.targetFps = 45;        // пол, ниже которого опускаться нельзя
+    try {
+      const saved = parseInt(localStorage.getItem('rp:targetFps') || '0', 10);
+      if (saved >= 20 && saved <= 120) this.targetFps = saved;
+    } catch { /* ignore */ }
+    this.onQualityChange = null;
 
     this.renderer = new THREE.WebGLRenderer({
       canvas,
@@ -38,9 +64,8 @@ export class Engine {
       powerPreference: 'high-performance',
       stencil: false
     });
-    this.renderScale = this.quality.scale;      // адаптивное разрешение (0.55…1)
-    this.adaptive = true;                       // автоподстройка под 50+ fps
-    this.targetFps = 50;
+    this.renderScale = this.quality.scale;      // адаптивное разрешение
+    this.adaptive = true;
     this._applyPixelRatio();
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -212,22 +237,28 @@ export class Engine {
   setQuality(name) {
     const q = QUALITY[name];
     if (!q) return;
-    this.quality = q;
+    this.auto = name === 'AUTO';
+    this.level = name === 'AUTO' ? (isMobileDevice() ? 3 : 6) : LEVELS.indexOf(q);
+    this._ceiling = LEVELS.length - 1;
+    this.quality = LEVELS[this.level];
     this.qualityName = name;
-    this.renderScale = q.scale;
+    this.renderScale = this.quality.scale;
     this._applyPixelRatio();
-    this.renderer.shadowMap.enabled = q.shadow > 0;
+    const cur = this.quality;
+    this.renderer.shadowMap.enabled = cur.shadow > 0;
     try { localStorage.setItem('rp:quality', name); } catch { /* ignore */ }
-    if (q.shadow > 0) {
+    if (cur.shadow > 0) {
       this.sun.castShadow = true;
-      this.sun.shadow.mapSize.set(q.shadow, q.shadow);
+      this.sun.shadow.mapSize.set(cur.shadow, cur.shadow);
       if (this.sun.shadow.map) { this.sun.shadow.map.dispose(); this.sun.shadow.map = null; }
     } else {
       this.sun.castShadow = false;
     }
-    this.camera.far = q.far;
+    this.camera.far = cur.far;
     this.camera.updateProjectionMatrix();
-    this.sky.scale.setScalar(q.far * 0.92);
+    this.sky.scale.setScalar(cur.far * 0.92);
+    this.resize();
+    if (this.onQualityChange) this.onQualityChange(q, this.level);
   }
 
   resize() {
@@ -267,33 +298,80 @@ export class Engine {
     loop();
   }
 
-  /** Автоподстройка разрешения: мало fps — рисуем мельче, много — возвращаем чёткость. */
+  /** Применяет уровень из лестницы качества (0..7). */
+  applyLevel(i) {
+    const lv = Math.max(0, Math.min(LEVELS.length - 1, i));
+    if (lv === this.level) return;
+    this.level = lv;
+    const q = LEVELS[lv];
+    this.quality = q;
+    this.renderScale = q.scale;
+    this._applyPixelRatio();
+
+    this.renderer.shadowMap.enabled = q.shadow > 0;
+    if (q.shadow > 0) {
+      this.sun.castShadow = true;
+      this.sun.shadow.mapSize.set(q.shadow, q.shadow);
+      if (this.sun.shadow.map) { this.sun.shadow.map.dispose(); this.sun.shadow.map = null; }
+    } else {
+      this.sun.castShadow = false;
+    }
+    this.camera.far = q.far;
+    this.camera.updateProjectionMatrix();
+    this.sky.scale.setScalar(q.far * 0.92);
+    this.resize();
+    if (this.onQualityChange) this.onQualityChange(q, lv);
+  }
+
+  /**
+   * Губернатор качества: держим максимум картинки при fps >= targetFps.
+   * Шаг вниз — быстрый (просадка заметна сразу), шаг вверх — осторожный.
+   */
   _autoScale() {
     if (!this.adaptive) return;
     const now = performance.now();
     this._lastScaleAt = this._lastScaleAt || 0;
-    if (now - this._lastScaleAt < 2000) return;        // не чаще раза в 2 с
-
-    const min = 0.55, max = this.quality.scale;
     this._lowStreak = this._lowStreak || 0;
     this._highStreak = this._highStreak || 0;
+    this._ceiling = this._ceiling == null ? LEVELS.length - 1 : this._ceiling;
 
-    if (this.fps < this.targetFps - 8) { this._lowStreak++; this._highStreak = 0; }
-    else if (this.fps > this.targetFps + 12) { this._highStreak++; this._lowStreak = 0; }
+    const fps = this.fps;
+    if (fps < this.targetFps) { this._lowStreak++; this._highStreak = 0; }
+    else if (fps > this.targetFps + 13) { this._highStreak++; this._lowStreak = 0; }
     else { this._lowStreak = 0; this._highStreak = 0; }
 
-    // пересоздание буфера — дорогая операция, поэтому только после устойчивой просадки
-    if (this._lowStreak >= 3 && this.renderScale > min) {
-      this.renderScale = Math.max(min, this.renderScale - 0.1);
-    } else if (this._highStreak >= 6 && this.renderScale < max) {
-      this.renderScale = Math.min(max, this.renderScale + 0.05);
-    } else {
+    if (!this.auto) {
+      // в ручных пресетах подкручиваем только разрешение
+      if (now - this._lastScaleAt < 2500) return;
+      const min = 0.55, max = this.quality.scale;
+      if (this._lowStreak >= 2 && this.renderScale > min) this.renderScale = Math.max(min, this.renderScale - 0.1);
+      else if (this._highStreak >= 5 && this.renderScale < max) this.renderScale = Math.min(max, this.renderScale + 0.05);
+      else return;
+      this._lowStreak = 0; this._highStreak = 0; this._lastScaleAt = now;
+      this._applyPixelRatio();
+      this.resize();
       return;
     }
-    this._lowStreak = 0; this._highStreak = 0;
-    this._lastScaleAt = now;
-    this._applyPixelRatio();
-    this.resize();
+
+    if (now - this._lastScaleAt < 2500) return;
+
+    if (this._lowStreak >= 2 && this.level > 0) {
+      // чем сильнее просадка, тем больше ступеней вниз за раз
+      const ratio = this.fps / this.targetFps;
+      const step = ratio < 0.5 ? 3 : ratio < 0.75 ? 2 : 1;
+      this._ceiling = Math.max(0, this.level - 1);   // выше этого без запаса не лезем
+      this._lastScaleAt = now;
+      this._lowStreak = 0;
+      this.applyLevel(this.level - step);
+    } else if (this._highStreak >= 4 && this.level < LEVELS.length - 1) {
+      // поднимаемся, только если запас по fps большой
+      const allowed = this.fps > this.targetFps + 20 ? LEVELS.length - 1 : this._ceiling;
+      if (this.level < allowed) {
+        this._lastScaleAt = now;
+        this._highStreak = 0;
+        this.applyLevel(this.level + 1);
+      }
+    }
   }
 
   stop() {

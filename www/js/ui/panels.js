@@ -412,14 +412,35 @@ export class Panels {
 
     b.appendChild(el('div', 'sec', 'Качество графики'));
     const seg = el('div', 'seg');
-    ['LOW', 'MEDIUM', 'HIGH'].forEach(q => {
+    ['AUTO', 'LOW', 'MEDIUM', 'HIGH'].forEach(q => {
       const btn = el('button', 'seg-btn' + (this.game.engine.qualityName === q ? ' active' : ''),
-        { LOW: 'Низкое', MEDIUM: 'Среднее', HIGH: 'Высокое' }[q]);
+        { AUTO: 'Авто', LOW: 'Низкое', MEDIUM: 'Среднее', HIGH: 'Высокое' }[q]);
       btn.onclick = () => { this.game.setQuality(q); this.refresh(); };
       seg.appendChild(btn);
     });
     b.appendChild(seg);
-    b.appendChild(el('div', 'd', '<div class="d" style="margin-top:6px">Низкое — без теней, короткая прорисовка. Для слабых телефонов.</div>'));
+
+    const eng = this.game.engine;
+    const info = el('div', 'row');
+    info.innerHTML = `<div class="ic">🎛</div><div class="grow">
+      <div class="t">Сейчас: уровень ${eng.level} из 7 · ${eng.fps} fps</div>
+      <div class="d">Авто поднимает графику до максимума, пока держится ${eng.targetFps}+ fps,
+      и снижает, если просело. Тени, дальность, трафик и чёткость подбираются сами.</div></div>`;
+    b.appendChild(info);
+
+    b.appendChild(el('div', 'sec', 'Минимальный FPS'));
+    const fpsSeg = el('div', 'seg');
+    [30, 45, 60].forEach(v => {
+      const btn = el('button', 'seg-btn' + (eng.targetFps === v ? ' active' : ''), v + ' fps');
+      btn.onclick = () => {
+        eng.targetFps = v;
+        try { localStorage.setItem('rp:targetFps', String(v)); } catch { /* ignore */ }
+        this.refresh();
+      };
+      fpsSeg.appendChild(btn);
+    });
+    b.appendChild(fpsSeg);
+    b.appendChild(el('div', 'd', '<div class="d" style="margin-top:6px">30 — красивее, 60 — плавнее. По умолчанию 45.</div>'));
 
     b.appendChild(el('div', 'sec', 'Вид'));
     const camSeg = el('div', 'seg');

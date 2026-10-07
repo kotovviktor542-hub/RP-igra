@@ -1,19 +1,20 @@
-/* character.js — качественная скелетная модель игрока (glTF + анимации).
-   Модели: www/models/player.glb (Idle/Walk/Run), www/models/player_f.glb (idle/walk/run).
-   Если модель не загрузилась — вызывающий код откатывается на процедурный Humanoid. */
+/* character.js — реалистичная скелетная модель персонажа (glTF, скелет Mixamo).
+   www/models/male.glb и female.glb — гражданские модели с PBR-текстурами,
+   www/models/anims.glb — общая библиотека анимаций (idle / walk / run / jump).
+   Если что-то не загрузилось, вызывающий код остаётся на процедурном Humanoid. */
 
 import * as THREE from '../../vendor/three.module.js';
 import { GLTFLoader } from '../../vendor/GLTFLoader.js';
 import { clone as skeletonClone } from '../../vendor/SkeletonUtils.js';
 
 export const MODELS = {
-  m: { url: 'models/player.glb',   scale: 1.0,  yaw: Math.PI, idle: 'Idle', walk: 'Walk', run: 'Run' },
-  f: { url: 'models/player_f.glb', scale: 1.05, yaw: Math.PI, idle: 'idle', walk: 'walk', run: 'run' }
+  m: { url: 'models/male.glb',   height: 1.80 },
+  f: { url: 'models/female.glb', height: 1.70 }
 };
+export const ANIM_URL = 'models/anims.glb';
 
 const cache = new Map();   // url -> Promise<{scene, animations}>
 
-/** Грузит (и кэширует) glTF-модель. */
 export function loadModel(url) {
   if (!cache.has(url)) {
     cache.set(url, new Promise((resolve, reject) => {
@@ -26,94 +27,98 @@ export function loadModel(url) {
   return cache.get(url);
 }
 
-/** Предзагрузка обеих моделей — вызывается на этапе загрузки игры. */
+/** Предзагрузка моделей и анимаций на этапе загрузки игры. */
 export async function preloadCharacters() {
-  const res = await Promise.allSettled(Object.values(MODELS).map(m => loadModel(m.url)));
+  const res = await Promise.allSettled([
+    loadModel(MODELS.m.url), loadModel(MODELS.f.url), loadModel(ANIM_URL)
+  ]);
   return res.filter(r => r.status === 'fulfilled').length;
 }
 
 /**
  * Скелетный персонаж с плавными переходами idle → walk → run.
- * API совместим с процедурным Humanoid: .root, .update(dt, state, speed), .setTint().
+ * API совместим с процедурным Humanoid: .root, .update(dt, state, speed).
  */
 export class Character {
-  constructor(gltf, spec, look = {}) {
-    this.spec = spec;
+  constructor(gltf, animGltf, spec, look = {}) {
     this.root = new THREE.Group();
 
     const model = skeletonClone(gltf.scene);
-    model.scale.setScalar(spec.scale * (look.height ? look.height / 1.78 : 1));
-    model.rotation.y = spec.yaw || 0;   // модель смотрит в +Z, как процедурный Humanoid
+    model.updateMatrixWorld(true);
+
+    // приводим рост к выбранному в редакторе
+    const box = new THREE.Box3().setFromObject(model);
+    const h = Math.max(0.1, box.max.y - box.min.y);
+    const target = (look.height || spec.height || 1.78);
+    const k = target / h;
+    model.scale.multiplyScalar(k);
+    model.position.y = -box.min.y * k;
+
     model.traverse(o => {
-      if (!o.isMesh) return;
+      if (!o.isMesh && !o.isSkinnedMesh) return;
       o.castShadow = true;
       o.receiveShadow = false;
       o.frustumCulled = false;
-      // материал клонируем, чтобы можно было подкрасить под выбор игрока
-      o.material = Array.isArray(o.material) ? o.material.map(m => m.clone()) : o.material.clone();
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      for (const m of mats) {
+        if (!m) continue;
+        m.side = THREE.FrontSide;
+        if (m.map) m.map.anisotropy = 4;
+      }
     });
+
     this.model = model;
     this.root.add(model);
 
+    const clips = (animGltf && animGltf.animations) || gltf.animations || [];
     this.mixer = new THREE.AnimationMixer(model);
-    const byName = {};
-    for (const clip of gltf.animations) byName[clip.name] = clip;
+    const find = n => clips.find(c => c.name === n) || null;
     this.actions = {
-      idle: byName[spec.idle] && this.mixer.clipAction(byName[spec.idle]),
-      walk: byName[spec.walk] && this.mixer.clipAction(byName[spec.walk]),
-      run:  byName[spec.run]  && this.mixer.clipAction(byName[spec.run])
+      idle: this._action(find('idle')),
+      walk: this._action(find('walk')),
+      run: this._action(find('run')),
+      jump: this._action(find('jump'))
     };
-    for (const a of Object.values(this.actions)) {
-      if (!a) continue;
-      a.enabled = true;
-      a.setEffectiveWeight(0);
-      a.play();
-    }
     if (this.actions.idle) this.actions.idle.setEffectiveWeight(1);
     this.current = 'idle';
-
-    this.setTint(look);
   }
 
-  /** Подкрашивает модель под выбор в редакторе персонажа. */
-  setTint(look = {}) {
-    const top = look.top != null ? new THREE.Color(look.top) : null;
-    const skin = look.skin != null ? new THREE.Color(look.skin) : null;
-    this.model.traverse(o => {
-      if (!o.isMesh) return;
-      const mats = Array.isArray(o.material) ? o.material : [o.material];
-      for (const m of mats) {
-        if (!m.color) continue;
-        const isSkin = /joint|skin|body|limb/i.test(m.name || '');
-        const c = isSkin ? skin : top;
-        if (c) m.color.copy(c).multiplyScalar(0.9).addScalar(0.1);
-        m.roughness = isSkin ? 0.78 : 0.62;
-        m.metalness = 0.04;
-      }
-    });
+  _action(clip) {
+    if (!clip) return null;
+    const a = this.mixer.clipAction(clip);
+    a.enabled = true;
+    a.setEffectiveWeight(0);
+    a.play();
+    return a;
   }
 
-  /** @param {string} state idle|walk|run */
+  /** Перекраска под редактор персонажа тут не нужна — у моделей свои текстуры. */
+  setTint() { /* no-op */ }
+
+  /** @param {string} state idle|walk|run|sit|drive */
   update(dt, state = 'idle', speed = 0) {
-    const want = this.actions[state] ? state : 'idle';
+    let want = state;
+    if (want === 'sit' || want === 'drive') want = 'idle';
+    if (!this.actions[want]) want = 'idle';
+
     if (want !== this.current) {
       const from = this.actions[this.current];
       const to = this.actions[want];
       if (to) {
         to.enabled = true;
         to.setEffectiveTimeScale(1);
-        to.crossFadeFrom(from || to, 0.22, false);
+        to.crossFadeFrom(from || to, 0.2, false);
         to.setEffectiveWeight(1);
         to.play();
       }
       if (from && from !== to) from.setEffectiveWeight(0);
       this.current = want;
     }
-    // темп шагов подстраивается под реальную скорость
+
     const a = this.actions[this.current];
     if (a) {
-      const base = this.current === 'run' ? 5.4 : this.current === 'walk' ? 2.1 : 1;
-      a.setEffectiveTimeScale(this.current === 'idle' ? 1 : Math.max(0.55, Math.min(1.8, speed / base)));
+      const base = this.current === 'run' ? 6.2 : this.current === 'walk' ? 2.6 : 1;
+      a.setEffectiveTimeScale(this.current === 'idle' ? 1 : Math.max(0.6, Math.min(1.7, speed / base)));
       a.setEffectiveWeight(1);
     }
     this.mixer.update(dt);
@@ -121,11 +126,6 @@ export class Character {
 
   dispose() {
     this.mixer.stopAllAction();
-    this.model.traverse(o => {
-      if (!o.isMesh) return;
-      const mats = Array.isArray(o.material) ? o.material : [o.material];
-      mats.forEach(m => m.dispose());
-    });
   }
 }
 
@@ -133,8 +133,8 @@ export class Character {
 export async function makeCharacter(sex = 'm', look = {}) {
   const spec = MODELS[sex] || MODELS.m;
   try {
-    const gltf = await loadModel(spec.url);
-    return new Character(gltf, spec, look);
+    const [gltf, anims] = await Promise.all([loadModel(spec.url), loadModel(ANIM_URL)]);
+    return new Character(gltf, anims, spec, look);
   } catch {
     return null;
   }

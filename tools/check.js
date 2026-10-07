@@ -40,7 +40,7 @@ group('Файлы проекта', () => {
     'js/game/content.js', 'js/game/state.js',
     'js/ui/hud.js', 'js/ui/panels.js', 'js/ui/chat.js', 'js/ui/map.js', 'js/ui/creator.js', 'js/ui/controls.js',
     'js/net/client.js', 'js/ui/radial.js', 'js/entities/character.js',
-    'models/player.glb', 'models/player_f.glb',
+    'models/male.glb', 'models/female.glb', 'models/anims.glb',
     'vendor/GLTFLoader.js', 'vendor/SkeletonUtils.js'
   ];
   need.forEach(f => ok(f, fs.existsSync(path.join(WWW, f))));
@@ -73,6 +73,18 @@ group('Файлы проекта', () => {
   const eng = fs.readFileSync(path.join(WWW, 'js/core/engine.js'), 'utf8');
   ok('адаптивное разрешение', /_autoScale/.test(eng) && /renderScale/.test(eng));
   ok('авто-качество по устройству', /defaultQuality/.test(eng) && /isMobileDevice/.test(eng));
+  ok('есть лестница качества из 8 уровней', (eng.match(/\{ lv: \d/g) || []).length === 8);
+  ok('губернатор держит целевой fps', /targetFps\s*=\s*45/.test(eng) && /applyLevel/.test(eng));
+  ok('по умолчанию режим AUTO', /return 'AUTO'/.test(eng));
+
+  const panels = fs.readFileSync(path.join(WWW, 'js/ui/panels.js'), 'utf8');
+  ok('в настройках есть режим Авто', /'AUTO', 'LOW', 'MEDIUM', 'HIGH'/.test(panels));
+  ok('в настройках выбирается минимальный fps', /rp:targetFps/.test(panels));
+
+  const ch = fs.readFileSync(path.join(WWW, 'js/entities/character.js'), 'utf8');
+  ok('модели персонажей — гражданские', /models\/male\.glb/.test(ch) && /models\/female\.glb/.test(ch));
+  ok('общая библиотека анимаций', /models\/anims\.glb/.test(ch));
+  ok('рост подгоняется под персонажа', /Box3/.test(ch));
 
   const cityJs = fs.readFileSync(path.join(WWW, 'js/world/city.js'), 'utf8');
   ok('коллайдеры в пространственной сетке', /SpatialGrid/.test(cityJs));

@@ -91,6 +91,8 @@ class Game {
     await step(78, 'Деревья, фонари, мелочь…');
     this.city.props.build();
     this.city.props.setDetail(this.engine.quality.props);
+    // губернатор качества сам меняет населённость города
+    this.engine.onQualityChange = (q) => this._applyQuality(q);
     await frame();
 
     await step(88, 'Оптимизация геометрии…');
@@ -763,10 +765,16 @@ class Game {
   setQuality(name) {
     this.engine.setQuality(name);
     localStorage.setItem('rp:quality', name);
-    this.traffic.setMax(this.engine.quality.traffic);
-    this.peds.setMax(this.engine.quality.npc);
-    this.city.props.setDetail(this.engine.quality.props);
-    this.hud.toast('Качество: ' + name);
+    this._applyQuality(this.engine.quality);
+    const label = { AUTO: 'Авто (максимум при 45+ fps)', LOW: 'Низкое', MEDIUM: 'Среднее', HIGH: 'Высокое' }[name] || name;
+    this.hud.toast('Качество: ' + label);
+  }
+
+  /** Подстраивает населённость города под текущий уровень графики. */
+  _applyQuality(q) {
+    this.traffic.setMax(q.traffic);
+    this.peds.setMax(q.npc);
+    this.city.props.setDetail(q.props);
   }
 
   connectServer(url) { this.net.connect(url); }

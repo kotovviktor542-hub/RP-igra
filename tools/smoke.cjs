@@ -155,7 +155,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   ok('треугольники в сцене (>30k)', perf.triangles > 30000, String(perf.triangles));
   ok('треугольников не больше 250k на кадр', perf.triangles < 250000, String(perf.triangles));
   ok('draw calls в разумных пределах (<260)', perf.drawCalls < 260, String(perf.drawCalls));
-  ok('текстур не слишком много (<60)', perf.textures < 60, String(perf.textures));
+  ok('текстур не слишком много (<75)', perf.textures < 75, String(perf.textures));
   ok('трафик заспавнен', perf.traffic > 0, String(perf.traffic));
   ok('пешеходы заспавнены', perf.peds > 0, String(perf.peds));
   ok('припаркованные авто есть', perf.parked > 0, String(perf.parked));
@@ -324,6 +324,27 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   ok('метка на карте ставится', actions.wp);
   ok('игра сохраняется', actions.saved);
   ok('переключение качества', actions.qLow);
+
+  console.log('\n\u001b[1mАвто-качество (пол 45 fps)\u001b[0m');
+  const gov = await page.evaluate(async () => {
+    const g = window.__game;
+    g.setQuality('AUTO');
+    const start = { level: g.engine.level, auto: g.engine.auto, target: g.engine.targetFps };
+    // софтверный рендер выдаёт ~10 fps, значит губернатор обязан опуститься в самый низ
+    await new Promise(r => setTimeout(r, 12000));
+    return {
+      start, level: g.engine.level, scale: +g.engine.renderScale.toFixed(2),
+      traffic: g.traffic.cars.length, peds: g.peds.list.length,
+      shadows: g.engine.renderer.shadowMap.enabled, far: g.engine.camera.far
+    };
+  });
+  console.log('    ' + JSON.stringify(gov));
+  ok('режим авто включается', gov.start.auto === true);
+  ok('целевой fps = 45', gov.start.target === 45, String(gov.start.target));
+  ok('при просадке графика снижается', gov.level <= 1, `${gov.start.level} → ${gov.level}`);
+  ok('на дне лестницы тени выключены', gov.shadows === false);
+  ok('на дне лестницы короткая прорисовка', gov.far <= 230, String(gov.far));
+  ok('населённость подстроилась', gov.traffic <= 8 && gov.peds <= 9, `${gov.traffic}/${gov.peds}`);
 
   console.log('\n\u001b[1mРадиальное меню\u001b[0m');
   const radial = await page.evaluate(async () => {
