@@ -1,6 +1,8 @@
 /* online.js — экран «Онлайн»: вход в аккаунт и выбор сервера. */
 
-import { allServers, addCustomServer, removeCustomServer, statusUrl } from '../net/config.js';
+import { allServers, addCustomServer, removeCustomServer, statusUrl,
+  googleClientId, setGoogleClientId } from '../net/config.js';
+import { pingRoom } from '../net/room.js';
 
 const $ = id => document.getElementById(id);
 
@@ -42,6 +44,7 @@ export class OnlineScreen {
   }
 
   show() {
+    this._offlineShown = false;
     this.root.classList.remove('hidden');
     this.visible = true;
     this.render();
@@ -57,8 +60,29 @@ export class OnlineScreen {
   render() {
     const b = this.body;
     b.innerHTML = '';
+    this._pings = 0;
+    this._alive = 0;
     this._renderAccount(b);
     this._renderServers(b);
+  }
+
+  /** Если ни один сервер не ответил — даём запасной оффлайн-режим. */
+  _checkOffline(total) {
+    if (this._pings < total || this._alive > 0 || this._offlineShown) return;
+    this._offlineShown = true;
+    const box = el('div', 'row', `<div class="ic">📴</div><div class="grow">
+      <div class="t">Сервера не отвечают</div>
+      <div class="d">Похоже, нет интернета. Можно пока поиграть локально — прогресс сохранится на телефоне.</div></div>`);
+    const go = el('button', 'btn sm', 'Играть без сети');
+    go.onclick = () => {
+      this.hide();
+      $('menu').classList.add('hidden');
+      this.game.pendingServer = null;
+      if (this.game.player) { this.game._enterWorld(); this.game.hud.show(); }
+      else this.game.creator.show();
+    };
+    box.appendChild(go);
+    this.body.appendChild(box);
   }
 
   /* ---------- аккаунт ---------- */
@@ -88,7 +112,20 @@ export class OnlineScreen {
     };
     b.appendChild(g);
     if (!a.googleEnabled) {
-      b.appendChild(el('div', 'd', 'Google-вход включится, когда будет добавлен Client ID из Google Cloud (инструкция: server/GOOGLE.md).'));
+      b.appendChild(el('div', 'd', 'Чтобы включить вход через Google, вставь сюда OAuth Client ID из Google Cloud Console (инструкция: server/GOOGLE.md).'));
+      const cid = el('input');
+      cid.type = 'text';
+      cid.className = 'field';
+      cid.placeholder = '…apps.googleusercontent.com';
+      cid.value = googleClientId();
+      b.appendChild(cid);
+      const save = el('button', 'btn sm', 'Сохранить Client ID');
+      save.onclick = () => {
+        setGoogleClientId(cid.value);
+        this.game.hud.toast(cid.value.trim() ? 'Client ID сохранён — кнопка Google включена' : 'Client ID очищен', 'good');
+        this.render();
+      };
+      b.appendChild(save);
     }
 
     b.appendChild(el('div', 'sec', 'Ник и пароль'));
@@ -139,8 +176,9 @@ export class OnlineScreen {
     }
 
     list.forEach(s => {
-      const row = el('div', 'row', `<div class="ic">🌐</div><div class="grow">
-        <div class="t">${s.name}</div><div class="d" data-st>проверяю…</div></div>`);
+      const tag = s.kind === 'room' ? 'публичная комната' : 'выделенный сервер';
+      const row = el('div', 'row', `<div class="ic">${s.kind === 'room' ? '🛰' : '🌐'}</div><div class="grow">
+        <div class="t">${s.name}</div><div class="d" data-st>${tag} · проверяю…</div></div>`);
       const join = el('button', 'btn sm primary', 'Войти');
       join.onclick = () => this._join(s);
       row.appendChild(join);
@@ -150,10 +188,18 @@ export class OnlineScreen {
         row.appendChild(del);
       }
       b.appendChild(row);
-      ping(s.url).then(p => {
+      const probe = s.kind === 'room' ? pingRoom(s) : ping(s.url);
+      probe.then(p => {
+        this._pings++;
+        if (p.ok) this._alive++;
+        this._checkOffline(list.length);
         const d = row.querySelector('[data-st]');
         if (!d) return;
-        d.textContent = p.ok ? `онлайн ${p.online}/${p.max} · ${s.url}` : `не отвечает · ${s.url}`;
+        if (s.kind === 'room') {
+          d.textContent = p.ok ? `публичная комната · сейчас в сети: ${p.online}` : 'комната недоступна';
+        } else {
+          d.textContent = p.ok ? `выделенный сервер · онлайн ${p.online}/${p.max}` : `сервер не отвечает · ${s.url}`;
+        }
       });
     });
 
@@ -178,7 +224,7 @@ export class OnlineScreen {
       const url = inp.value.trim();
       if (!url) { this.game.hud.toast('Введи адрес', 'bad'); return; }
       localStorage.setItem('rp:lastServer', url);
-      this._join({ name: url, url });
+      this._join({ name: url, url, kind: 'ws' });
     };
     row.appendChild(go); row.appendChild(add);
     b.appendChild(row);
@@ -191,6 +237,6 @@ export class OnlineScreen {
     }
     this.hide();
     $('menu').classList.add('hidden');
-    this.game.joinServer(server.url, server.name);
+    this.game.joinServer(server);
   }
 }

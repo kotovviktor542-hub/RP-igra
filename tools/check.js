@@ -131,7 +131,7 @@ group('Файлы проекта', () => {
   const netJs = fs.readFileSync(path.join(WWW, 'js/net/client.js'), 'utf8');
   const srvJs = fs.readFileSync(path.join(ROOT, 'server', 'server.js'), 'utf8');
   ok('в меню главная кнопка — онлайн', /id="btn-online"[^>]*class="btn primary"/.test(html));
-  ok('оффлайн остался как тренировка', /Тренировка \(оффлайн\)/.test(html));
+  ok('оффлайн спрятан, но доступен как запасной', /id="btn-new" class="btn hidden"/.test(html));
   ok('есть экран онлайна', /id="online"/.test(html) && /OnlineScreen/.test(mainJs));
   ok('список серверов настраивается', /OFFICIAL_SERVERS/.test(cfg) && /addCustomServer/.test(cfg));
   ok('серверы пингуются по /status', /statusUrl/.test(cfg) && /fetch\(statusUrl/.test(onlineJs));
@@ -513,6 +513,33 @@ group('Симуляция: 200 смен подряд', () => {
     } catch (e) { err = e.message; }
     ok(`сид ${seed}: 200 смен (ур.${p.level}, ${Math.round(p.money)} $, реп ${p.rep})`, err === null, err);
   });
+});
+
+group('Публичные комнаты (MQTT)', () => {
+  const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+  const mqttSrc = read('www/js/net/mqtt.js');
+  const roomSrc = read('www/js/net/room.js');
+  const cfgSrc = read('www/js/net/config.js');
+  const onlineSrc = read('www/js/ui/online.js');
+  const mainSrc = read('www/js/main.js');
+  const wf = read('.github/workflows/build-apk.yml');
+
+  ok('есть MQTT-клиент', /class MqttClient/.test(mqttSrc));
+  ok('MQTT умеет connect/subscribe/publish', /connect\s*\(/.test(mqttSrc) && /subscribe\s*\(/.test(mqttSrc) && /publish\s*\(/.test(mqttSrc));
+  ok('MQTT шлёт PINGREQ (keepalive)', /PINGREQ|0xC0|12 << 4|_ping/.test(mqttSrc));
+  ok('у комнаты есть last will (игрок исчезает при обрыве)', /will/.test(mqttSrc) && /will:/.test(roomSrc));
+  ok('RoomClient наследует сетевой клиент', /class RoomClient extends NetClient/.test(roomSrc));
+  ok('RoomClient шлёт состояние и чат', /t === 'state'/.test(roomSrc) && /t === 'chat'/.test(roomSrc));
+  ok('игроки выбрасываются по таймауту', /DROP_AFTER/.test(roomSrc));
+  ok('есть опрос комнаты перед входом', /export (async )?function pingRoom/.test(roomSrc));
+  ok('официальных комнат >= 3', (cfgSrc.match(/kind: 'room'/g) || []).length >= 3);
+  ok('комнаты ведут на публичные брокеры', /broker\.emqx\.io|hivemq|mosquitto/.test(cfgSrc));
+  ok('Client ID можно ввести в игре', /setGoogleClientId/.test(cfgSrc) && /setGoogleClientId/.test(onlineSrc));
+  ok('Google Client ID читается из настроек', /googleClientId/.test(read('www/js/net/auth.js')));
+  ok('main выбирает транспорт по kind', /RoomClient/.test(mainSrc) && /kind === 'room'/.test(mainSrc));
+  ok('есть запасной оффлайн-режим без сети', /_checkOffline/.test(onlineSrc));
+  ok('APK подписывается релизным ключом', /assembleRelease/.test(wf) && /apksigner/.test(wf));
+  ok('ключ подписи лежит в репозитории', fs.existsSync(path.join(ROOT, 'android-keys/release.keystore')));
 });
 
 /* ======================= ИТОГ ======================= */

@@ -8,13 +8,25 @@
 export const GOOGLE_CLIENT_ID = '';
 
 export const OFFICIAL_SERVERS = [
-  // {
-  //   id: 'main',
-  //   name: 'Horizons RP — Официальный',
-  //   url: 'wss://horizons-rp-server.onrender.com',
-  //   region: 'EU'
-  // }
+  // Публичные комнаты: работают без своего хостинга, через открытые MQTT-брокеры.
+  // Мир детерминированный, поэтому город у всех одинаковый; прогресс хранится на телефоне.
+  { id: 'eu1', kind: 'room', name: 'Horizons RP · Европа #1', broker: 'wss://broker.emqx.io:8084/mqtt', room: 'eu1' },
+  { id: 'eu2', kind: 'room', name: 'Horizons RP · Европа #2', broker: 'wss://broker.emqx.io:8084/mqtt', room: 'eu2' },
+  { id: 'ru1', kind: 'room', name: 'Horizons RP · Свободный', broker: 'wss://broker.hivemq.com:8884/mqtt', room: 'ru1' },
+  { id: 'test', kind: 'room', name: 'Horizons RP · Песочница', broker: 'wss://test.mosquitto.org:8081/mqtt', room: 'sandbox' }
+  // Выделенный сервер (аккаунты + облачные сейвы) добавляется так:
+  // { id: 'main', kind: 'ws', name: 'Horizons RP — Официальный', url: 'wss://адрес-сервера' }
 ];
+
+/** Client ID для входа через Google можно задать прямо в игре (экран «Онлайн»). */
+export function googleClientId() {
+  try { return localStorage.getItem('rp:googleClientId') || GOOGLE_CLIENT_ID; }
+  catch (e) { return GOOGLE_CLIENT_ID; }
+}
+
+export function setGoogleClientId(id) {
+  try { localStorage.setItem('rp:googleClientId', String(id || '').trim()); } catch (e) { /* no-op */ }
+}
 
 /** http(s)-адрес для запроса статуса по ws(s)-адресу сервера. */
 export function statusUrl(wsUrl) {
@@ -32,6 +44,7 @@ export function allServers() {
 }
 
 export function addCustomServer(name, url) {
+  // свои серверы — всегда выделенные (kind: 'ws')
   let custom = [];
   try { custom = JSON.parse(localStorage.getItem('rp:servers') || '[]'); } catch (e) { custom = []; }
   const id = 'c' + Date.now();

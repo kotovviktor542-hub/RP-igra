@@ -67,16 +67,29 @@ jobs:
       - name: Patch Android (иконки Horizons RP + ландшафт)
         run: node tools/patch-android.js
 
-      - name: Build debug APK
+      - name: Build release APK
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon --stacktrace
+          ./gradlew assembleRelease --no-daemon --stacktrace
+
+      - name: Sign APK (постоянный ключ, стабильный SHA-1)
+        run: |
+          BT=$(ls -d "$ANDROID_SDK_ROOT"/build-tools/* | sort -V | tail -1)
+          echo "build-tools: $BT"
+          RAW=$(find android/app/build/outputs/apk/release -name "*.apk" | head -1)
+          echo "unsigned: $RAW"
+          "$BT/zipalign" -p -f 4 "$RAW" aligned.apk
+          "$BT/apksigner" sign \
+            --ks android-keys/release.keystore \
+            --ks-pass pass:rpigra2026 --key-pass pass:rpigra2026 --ks-key-alias rpigra \
+            --out signed.apk aligned.apk
+          "$BT/apksigner" verify --print-certs signed.apk | grep -i "SHA-1" || true
 
       - name: Prepare artifact
         id: prep
         run: |
-          APK=$(find android/app/build/outputs/apk/debug -name "*.apk" | head -1)
+          APK=signed.apk
           echo "Found APK: $APK"
           mkdir -p out
           cp "$APK" "out/HorizonsRP-build${{ github.run_number }}.apk"
@@ -100,7 +113,9 @@ jobs:
             🌐 Играть сразу в браузере (ничего не качать): https://kotovviktor542-hub.github.io/RP-igra/
             📱 APK ниже — ставится один раз, дальше игра обновляется сама кнопкой «Обновить».
 
-            Ручная сборка APK из ветки main.
+            Ручная сборка APK из ветки main. Подпись — постоянный релизный ключ
+            (SHA-1 `1C:0A:C6:72:85:AF:9E:5C:28:81:F1:67:AE:26:3E:96:09:EE:74:C2`),
+            поэтому обновление ставится поверх прошлой версии.
           files: ${{ steps.prep.outputs.apk }}
           draft: false
           prerelease: false

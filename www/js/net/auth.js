@@ -5,7 +5,7 @@
    недоступна, остаются ник+пароль и гость.
    Сам токен проверяет сервер (server/server.js → verifyGoogle). */
 
-import { GOOGLE_CLIENT_ID } from './config.js';
+import { googleClientId } from './config.js';
 
 const KEY = 'rp:account';
 const GIS_SRC = 'https://accounts.google.com/gsi/client';
@@ -21,7 +21,7 @@ export class Auth {
   }
 
   get signedIn() { return !!this.account; }
-  get googleEnabled() { return !!GOOGLE_CLIENT_ID; }
+  get googleEnabled() { return !!googleClientId(); }
 
   _store() {
     try { localStorage.setItem(KEY, JSON.stringify(this.account)); } catch (e) { /* no-op */ }
@@ -78,7 +78,7 @@ export class Auth {
       const finish = (res) => { if (!done) { done = true; resolve(res); } };
       try {
         window.google.accounts.id.initialize({
-          client_id: GOOGLE_CLIENT_ID,
+          client_id: googleClientId(),
           callback: (resp) => {
             if (!resp || !resp.credential) { finish({ ok: false, reason: 'Google не дал токен' }); return; }
             const payload = parseJwt(resp.credential);

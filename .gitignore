@@ -6,7 +6,6 @@ build/
 out/
 *.apk
 *.aab
-*.keystore
 *.log
 npm-debug.log*
 .DS_Store
@@ -19,3 +18,5 @@ package-lock.json
 shots/
 server/data/
 server/.testdata/
+# релизный ключ приложения лежит в android-keys/ (нужен для стабильного SHA-1)
+!android-keys/release.keystore

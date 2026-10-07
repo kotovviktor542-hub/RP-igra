@@ -17,6 +17,7 @@ import { BigMap } from './ui/map.js';
 import { Creator } from './ui/creator.js';
 import { OnlineScreen } from './ui/online.js';
 import { Auth } from './net/auth.js';
+import { RoomClient } from './net/room.js';
 import { Controls } from './ui/controls.js';
 import { RadialMenu } from './ui/radial.js';
 import { preloadCharacters } from './entities/character.js';
@@ -152,7 +153,10 @@ class Game {
     $('btn-continue').addEventListener('click', () => {
       const d = S.load();
       if (!d) { this.hud.toast('Сохранение не найдено', 'bad'); return; }
+      // продолжаем на сервере: сначала выбор комнаты, мир грузится сразу
+      $('menu').classList.add('hidden');
       this.loadGame(d);
+      this.online.show();
     });
     $('btn-online').addEventListener('click', () => {
       $('menu').classList.add('hidden');
@@ -191,8 +195,9 @@ class Game {
    * Заход на сервер: если персонажа ещё нет — сперва создание,
    * затем подключение и синхронизация профиля с сервером.
    */
-  joinServer(url, name) {
-    this.pendingServer = { url, name };
+  joinServer(server) {
+    if (typeof server === 'string') server = { url: server, name: server, kind: 'ws' };
+    this.pendingServer = server;
     if (!this.player) {
       const saved = S.load();
       if (saved) this.loadGame(saved);
@@ -205,7 +210,7 @@ class Game {
       this._enterWorld();
     }
     this.hud.show();
-    this.connectServer(url);
+    this.connectServer(server);
   }
 
   /** Сервер подтвердил аккаунт: подтягиваем облачное сохранение. */
@@ -261,7 +266,7 @@ class Game {
     this.chat.add(`Добро пожаловать в город, ${this.player.name}!`, 'sys');
     this.hud.toast('Новая жизнь начинается', 'good');
     this._giveStarterKit();
-    if (this.pendingServer) this.connectServer(this.pendingServer.url);
+    if (this.pendingServer) this.connectServer(this.pendingServer);
   }
 
   loadGame(saveData) {
@@ -1021,7 +1026,26 @@ class Game {
     this.city.props.setDetail(q.props);
   }
 
-  connectServer(url) { this.net.connect(url); }
+  /**
+   * Подключение к серверу. Публичные комнаты идут через MQTT-брокер (RoomClient),
+   * выделенные серверы — через свой протокол (NetClient).
+   */
+  connectServer(server) {
+    if (typeof server === 'string') server = { url: server, kind: 'ws', name: server };
+    const wantRoom = server.kind === 'room';
+
+    // отключаем прежний транспорт
+    if (this.net) this.net.disconnect();
+
+    if (wantRoom) {
+      if (!(this.net instanceof RoomClient)) this.net = new RoomClient(this);
+      this.net.connect(server);
+    } else {
+      if (this.net instanceof RoomClient) this.net = new NetClient(this);
+      this.net.connect(server.url || server);
+    }
+    this.currentServer = server;
+  }
 
   /* ======================= СОХРАНЕНИЕ ======================= */
   saveGame(notify) {
