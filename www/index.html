@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0f1117">
+  <title>RP-igra</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- ЭКРАН: СТАРТ / СОЗДАНИЕ ПЕРСОНАЖА -->
+    <section id="screen-start" class="screen active">
+      <div class="start-wrap">
+        <h1 class="logo">RP-igra</h1>
+        <p class="tagline">Симулятор жизни</p>
+
+        <div class="card">
+          <label class="field">
+            <span class="field-label">Имя персонажа</span>
+            <input id="input-name" type="text" maxlength="20" placeholder="Виктор" autocomplete="off">
+          </label>
+
+          <div class="field">
+            <span class="field-label">Пол</span>
+            <div class="seg" id="seg-gender">
+              <button class="seg-btn active" data-value="m">Мужской</button>
+              <button class="seg-btn" data-value="f">Женский</button>
+            </div>
+          </div>
+
+          <div class="field">
+            <span class="field-label">Старт</span>
+            <div class="seg vertical" id="seg-origin">
+              <button class="seg-btn active" data-value="poor">Из бедной семьи — мало денег, много упорства</button>
+              <button class="seg-btn" data-value="mid">Средний класс — всего по чуть-чуть</button>
+              <button class="seg-btn" data-value="rich">Обеспеченная семья — деньги есть, мотивации нет</button>
+            </div>
+          </div>
+        </div>
+
+        <button id="btn-new-game" class="btn primary big">Начать жизнь</button>
+        <button id="btn-continue" class="btn ghost big hidden">Продолжить</button>
+        <p class="version" id="version-label">v0.1.0</p>
+      </div>
+    </section>
+
+    <!-- ЭКРАН: ИГРА -->
+    <section id="screen-game" class="screen">
+      <header class="topbar">
+        <div class="topbar-row">
+          <div class="who">
+            <span id="hud-name" class="hud-name">—</span>
+            <span id="hud-age" class="hud-sub">—</span>
+          </div>
+          <div class="money">
+            <span id="hud-money">0 ₽</span>
+          </div>
+        </div>
+        <div class="topbar-row small">
+          <span id="hud-day">День 1</span>
+          <span id="hud-job">Безработный</span>
+        </div>
+      </header>
+
+      <div class="stats" id="stats"></div>
+
+      <main class="content">
+        <div class="tab-panel active" data-panel="actions">
+          <div id="actions-list" class="actions"></div>
+        </div>
+
+        <div class="tab-panel" data-panel="skills">
+          <div id="skills-list" class="skills"></div>
+        </div>
+
+        <div class="tab-panel" data-panel="log">
+          <div id="log-list" class="log"></div>
+        </div>
+      </main>
+
+      <nav class="tabs">
+        <button class="tab active" data-tab="actions">Действия</button>
+        <button class="tab" data-tab="skills">Навыки</button>
+        <button class="tab" data-tab="log">Дневник</button>
+        <button class="tab" data-tab="menu">Меню</button>
+      </nav>
+    </section>
+
+    <!-- МОДАЛКА -->
+    <div id="modal" class="modal hidden">
+      <div class="modal-box">
+        <h2 id="modal-title">Заголовок</h2>
+        <p id="modal-text">Текст</p>
+        <div id="modal-actions" class="modal-actions"></div>
+      </div>
+    </div>
+
+    <!-- ТОСТ -->
+    <div id="toast" class="toast hidden"></div>
+  </div>
+
+  <script src="js/state.js"></script>
+  <script src="js/data.js"></script>
+  <script src="js/engine.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+{
+  "appId": "com.kotovviktor.rpigra",
+  "appName": "RP-igra",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": true
+  },
+  "server": {
+    "androidScheme": "https"
+  }
+}
