@@ -346,6 +346,22 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   ok('на дне лестницы короткая прорисовка', gov.far <= 230, String(gov.far));
   ok('населённость подстроилась', gov.traffic <= 8 && gov.peds <= 9, `${gov.traffic}/${gov.peds}`);
 
+  console.log('\n\u001b[1mКнопки принимают касания\u001b[0m');
+  const hit = await page.evaluate(() => {
+    const ids = ['b-punch', 'b-aim', 'b-jump', 'b-action', 'b-run', 'radial-btn'];
+    const bad = [];
+    for (const id of ids) {
+      const el = document.getElementById(id);
+      const r = el.getBoundingClientRect();
+      const top = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+      if (!top || (top !== el && !el.contains(top))) bad.push(id + '←' + (top ? (top.id || top.className) : 'null'));
+    }
+    return { bad, flashPE: getComputedStyle(document.getElementById('dmg-flash')).pointerEvents };
+  });
+  console.log('    ' + JSON.stringify(hit));
+  ok('ни один слой не перекрывает кнопки', hit.bad.length === 0, hit.bad.join(', '));
+  ok('вспышка урона не ловит касания', hit.flashPE === 'none', hit.flashPE);
+
   console.log('\n\u001b[1mБой и прицеливание\u001b[0m');
   const combat = await page.evaluate(async () => {
     const g = window.__game;

@@ -70,6 +70,8 @@ input{font-family:inherit}
 /* ---------- HUD ---------- */
 #hud{position:fixed;inset:0;z-index:10;pointer-events:none}
 #hud>*{pointer-events:auto}
+/* сквозные слои: id-селектор, иначе правило выше перебивает их по специфичности */
+#hud>#touch,#hud>#dmg-flash,#hud>#crosshair,#hud>#toasts,#hud>#prompt,#hud>#tracker{pointer-events:none}
 
 .hud-top-left{position:absolute;top:calc(var(--st) + 10px);left:calc(var(--sl) + 12px);display:flex;flex-direction:column;gap:4px}
 .hud-top-right{position:absolute;top:calc(var(--st) + 10px);right:calc(var(--sr) + 12px);display:flex;flex-direction:column;gap:4px;align-items:flex-end}

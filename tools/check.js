@@ -115,6 +115,7 @@ group('Файлы проекта', () => {
   ok('розыск растёт и затухает', /addWanted/.test(mainJs) && /this\.wanted = Math\.max\(0, this\.wanted - dt/.test(mainJs));
   ok('задержание со штрафом', /_arrest\(\)/.test(mainJs) && /Задержан/.test(mainJs));
   ok('урон игроку от NPC', /hurtPlayer/.test(mainJs) && /flashDamage/.test(mainJs));
+  ok('сквозные слои HUD не ловят касания', /#hud>#touch,#hud>#dmg-flash,#hud>#crosshair/.test(css));
   ok('в HUD есть розыск и патроны', /id="hud-wanted"/.test(html) && /id="hud-ammo"/.test(html));
   ok('руки опущены вдоль тела', /_relaxArms/.test(pl) && /_aimBone/.test(pl));
   ok('в машине не ударить и не прицелиться', /Сначала выйди из машины/.test(mainJs) && /В машине не прицелиться/.test(mainJs));
