@@ -1,221 +1,922 @@
-/* main.js — связка UI и движка */
-(function () {
-  'use strict';
+/* main.js — сборка игры: загрузка мира, меню, игровой цикл, взаимодействия. */
 
-  var State = window.RPState;
-  var Data = window.RPData;
-  var Engine = window.RPEngine;
-  var UI = window.RPUI;
+import * as THREE from '../vendor/three.module.js';
+import { Engine } from './core/engine.js';
+import { makeRNG, dist2D, fmtMoney, clamp } from './core/utils.js';
+import { City, GRID, CELL, roadX, OFFSET } from './world/city.js';
+import { Player } from './entities/player.js';
+import { Vehicle, VEHICLES, CAR_COLORS } from './entities/vehicle.js';
+import { Traffic, Pedestrians } from './entities/ai.js';
+import { HUD } from './ui/hud.js';
+import { Panels } from './ui/panels.js';
+import { Chat } from './ui/chat.js';
+import { BigMap } from './ui/map.js';
+import { Creator } from './ui/creator.js';
+import { Controls } from './ui/controls.js';
+import { NetClient } from './net/client.js';
+import * as S from './game/state.js';
+import { ITEMS, JOBS, ECONOMY } from './game/content.js';
 
-  var APP_VERSION = '0.1.0';
-  var state = null;
+const VERSION = '0.2.0';
+const WORLD_SEED = 20261007;
+const $ = id => document.getElementById(id);
+const frame = () => new Promise(r => requestAnimationFrame(() => setTimeout(r, 0)));
 
-  /* ---------- сохранение ---------- */
-  function persist() { if (state) State.save(state); }
+const LOAD_HINTS = [
+  'Совет: держи кнопку БЕГ, чтобы ускориться.',
+  'Совет: подойди к машине и нажми E — сядешь за руль.',
+  'Совет: тапни по карте, чтобы поставить метку маршрута.',
+  'Совет: следи за топливом — на АЗС можно заправиться.',
+  'Совет: голод и жажда отнимают здоровье. Заходи в магазин.',
+  'Совет: /me и /do работают как в настоящем RP-чате.',
+  'Совет: работа курьером доступна сразу, без прав.'
+];
 
-  function refresh() {
-    UI.renderAll(state, handleAction);
-    persist();
+class Game {
+  constructor() {
+    this.engine = null;
+    this.city = null;
+    this.player = null;        // данные (сейв)
+    this.player3d = null;      // контроллер
+    this.worldVehicles = [];
+    this.parkedSlots = [];
+    this.waypoint = null;
+    this.paused = true;
+    this._jumpLatch = false;
+    this._saveAcc = 0;
+    this._visitAcc = 0;
   }
 
-  /* ---------- действия ---------- */
-  function handleAction(actionId) {
-    if (actionId === 'find_job') {
-      openJobList();
-      return;
-    }
-    if (actionId === 'quit_job') {
-      UI.modal('Уволиться?', 'Стабильного дохода больше не будет.', [
-        { label: 'Да, увольняюсь', cls: 'danger', onClick: function () { runAction(actionId); } },
-        { label: 'Передумал', cls: 'ghost' }
-      ]);
-      return;
-    }
-    runAction(actionId);
+  /* ======================= ЗАГРУЗКА ======================= */
+  async boot() {
+    $('menu-version').textContent = 'v' + VERSION;
+    $('load-hint').textContent = LOAD_HINTS[(Math.random() * LOAD_HINTS.length) | 0];
+
+    const step = async (pct, text) => {
+      $('load-bar').style.width = pct + '%';
+      $('load-text').textContent = text;
+      await frame();
+    };
+
+    await step(6, 'Запуск рендерера…');
+    const qual = localStorage.getItem('rp:quality') ||
+      (navigator.hardwareConcurrency >= 8 ? 'HIGH' : navigator.hardwareConcurrency >= 4 ? 'MEDIUM' : 'LOW');
+    this.engine = new Engine($('gl'), qual);
+    this.scene = this.engine.scene;
+    this.camera = this.engine.camera;
+
+    await step(16, 'Генерация текстур…');
+    await frame();
+
+    await step(32, 'Планировка города…');
+    this.city = new City(this.scene, WORLD_SEED);
+    this.city._planDistricts();
+    await frame();
+
+    await step(46, 'Дороги и тротуары…');
+    this.city._buildGround();
+    this.city._buildRoads();
+    this.city._buildRoadGraph();
+    await frame();
+
+    await step(62, 'Застройка кварталов…');
+    this.city._buildBlocks();
+    await frame();
+
+    await step(78, 'Деревья, фонари, мелочь…');
+    this.city.props.build();
+    await frame();
+
+    await step(88, 'Оптимизация геометрии…');
+    this.city._finishChunks();
+    await frame();
+
+    await step(94, 'Подготовка транспорта…');
+    this._prepareParking();
+    await frame();
+
+    await step(98, 'Почти готово…');
+    this.hud = new HUD();
+    this.panels = new Panels(this);
+    this.chat = new Chat(this);
+    this.bigmap = new BigMap(this);
+    this.net = new NetClient(this);
+    this.controls = new Controls(this);
+
+    this.traffic = new Traffic(this.scene, this.city, this.engine.quality.traffic);
+    this.peds = new Pedestrians(this.scene, this.city, this.engine.quality.npc);
+
+    this.creator = new Creator(
+      data => this.startNewGame(data),
+      () => $('menu').classList.remove('hidden')
+    );
+
+    this._bindMenu();
+    this.engine.add((dt) => this.update(dt));
+    this.engine.start();
+
+    await step(100, 'Готово');
+    await new Promise(r => setTimeout(r, 180));
+    $('loader').classList.add('hidden');
+    this._showMenu();
   }
 
-  function runAction(actionId) {
-    var res = Engine.doAction(state, actionId);
-    if (!res.ok) {
-      UI.toast(res.reason);
-      return;
-    }
-    refresh();
+  _bindMenu() {
+    const saved = S.load();
+    if (saved) $('btn-continue').classList.remove('hidden');
 
-    if (res.dayEnded) {
-      var head = 'День ' + state.day;
-      var body = res.messages.join('\n');
-      if (res.event) {
-        body = res.event.text + '\n\n' + res.event.result + (body ? '\n\n' + body : '');
-        head = res.event.title;
-      }
-      if (!body) body = 'Ночь прошла спокойно.';
-      UI.modal(head, body, [{ label: 'Дальше', cls: 'primary', onClick: afterModal }]);
-    } else if (res.messages.length) {
-      UI.toast(res.messages[0]);
-    }
-  }
-
-  function afterModal() {
-    refresh();
-    if (!state.alive) gameOver();
-  }
-
-  function gameOver() {
-    UI.modal('Игра окончена',
-      state.name + ' не дожил до лучших времён.\n\nПрожито дней: ' + state.day +
-      '\nИтоговый счёт: ' + Engine.score(state),
-      [{ label: 'Начать заново', cls: 'primary', onClick: function () {
-        State.wipe();
-        state = null;
-        UI.showScreen('screen-start');
-        refreshContinueButton();
-      } }]);
-  }
-
-  /* ---------- работа ---------- */
-  function openJobList() {
-    var r = Engine.doAction(state, 'find_job');
-    if (!r.ok) { UI.toast(r.reason); return; }
-    refresh();
-
-    var buttons = Data.JOBS.map(function (job) {
-      var ok = Engine.jobAvailable(state, job);
-      var isCurrent = state.job === job.id;
-      var label = job.name + ' — ' + job.pay + ' ₽/смена' +
-        (isCurrent ? ' (текущая)' : (ok ? '' : ' 🔒'));
-      return {
-        label: label,
-        cls: ok && !isCurrent ? 'primary' : 'ghost',
-        onClick: function () {
-          if (isCurrent) { UI.toast('Ты уже тут работаешь'); return; }
-          if (!ok) { UI.toast('Не хватает навыков: ' + reqText(job)); return; }
-          var res = Engine.takeJob(state, job.id);
-          UI.toast(res.ok ? 'Устроился: ' + job.name : res.reason);
-          refresh();
-        }
-      };
+    $('btn-continue').addEventListener('click', () => {
+      const d = S.load();
+      if (!d) { this.hud.toast('Сохранение не найдено', 'bad'); return; }
+      this.loadGame(d);
     });
-    buttons.push({ label: 'Закрыть', cls: 'ghost' });
-
-    UI.modal('Вакансии', Data.JOBS.map(function (j) {
-      return '• ' + j.name + ': ' + j.desc;
-    }).join('\n'), buttons);
-  }
-
-  function reqText(job) {
-    var out = [];
-    for (var k in job.req) {
-      if (Object.prototype.hasOwnProperty.call(job.req, k)) {
-        out.push(Engine.skillName(k) + ' ' + job.req[k]);
+    $('btn-new').addEventListener('click', () => {
+      $('menu').classList.add('hidden');
+      this.creator.show();
+    });
+    $('btn-servers').addEventListener('click', () => {
+      $('menu').classList.add('hidden');
+      if (!this.player) {
+        // нужен персонаж, чтобы подключиться
+        this.creator.show();
+        this.hud.toast('Сначала создай персонажа', 'bad');
+        return;
       }
+      this.hud.show();
+      this.panels.open('servers');
+    });
+    $('btn-settings').addEventListener('click', () => {
+      if (!this.player) { this.hud.toast('Сначала начни игру'); return; }
+      $('menu').classList.add('hidden');
+      this.hud.show();
+      this.panels.open('settings');
+    });
+  }
+
+  _showMenu() {
+    $('menu').classList.remove('hidden');
+    this.paused = true;
+  }
+
+  /* ======================= СТАРТ ИГРЫ ======================= */
+  startNewGame(data) {
+    const spawn = this._spawnPoint();
+    this.player = S.createPlayer({ name: data.name, look: data.look, x: spawn.x, z: spawn.z });
+    this._enterWorld();
+    this.chat.add(`Добро пожаловать в город, ${this.player.name}!`, 'sys');
+    this.hud.toast('Новая жизнь начинается', 'good');
+    this._giveStarterKit();
+  }
+
+  loadGame(saveData) {
+    this.player = saveData;
+    this._enterWorld();
+    this.chat.add(`С возвращением, ${this.player.name}.`, 'sys');
+  }
+
+  _giveStarterKit() {
+    S.addItem(this.player, 'sandwich', 2);
+    S.addItem(this.player, 'water', 2);
+    S.addItem(this.player, 'phone', 1);
+  }
+
+  _spawnPoint() {
+    // на тротуаре жилого квартала (2,2)
+    return { x: roadX(2) + CELL * 0.5, z: roadX(2) + 11 };
+  }
+
+  _enterWorld() {
+    $('menu').classList.add('hidden');
+    $('loader').classList.add('hidden');
+    this.hud.show();
+
+    if (!this.player3d) {
+      this.player3d = new Player(this.scene, this.camera, this.player.look);
+    } else {
+      this.player3d.setLook(this.player.look);
     }
-    return out.join(', ') || '—';
+    const p = this.player.pos || this._spawnPoint();
+    this.player3d.teleport(p.x, p.z, p.rot || 0);
+    this.player3d.distWalked = this.player.stats2.distWalked || 0;
+    this.player3d.distDriven = this.player.stats2.distDriven || 0;
+
+    this._restoreOwnedVehicles();
+    this.paused = false;
   }
 
-  /* ---------- меню ---------- */
-  function openMenu() {
-    UI.modal('Меню', 'RP-igra v' + APP_VERSION + '\n\nДень ' + state.day + ', счёт ' + Engine.score(state), [
-      { label: 'Сохранить сейчас', cls: 'ghost', onClick: function () { persist(); UI.toast('Сохранено'); } },
-      { label: 'Начать заново', cls: 'danger', onClick: confirmRestart },
-      { label: 'Закрыть', cls: 'ghost' }
-    ]);
+  quitToMenu() {
+    this.saveGame(true);
+    this.panels.close();
+    this.bigmap.hide();
+    this.hud.hide();
+    this.paused = true;
+    $('btn-continue').classList.remove('hidden');
+    $('menu').classList.remove('hidden');
   }
 
-  function confirmRestart() {
-    UI.modal('Начать заново?', 'Текущий прогресс будет удалён навсегда.', [
-      { label: 'Да, удалить', cls: 'danger', onClick: function () {
-        State.wipe();
-        state = null;
-        UI.showScreen('screen-start');
-        refreshContinueButton();
+  confirmWipe() {
+    this.dialog('Удалить сохранение?', 'Весь прогресс будет стёрт безвозвратно.', [
+      { label: 'Да, удалить', cls: 'danger', fn: () => {
+        S.wipe();
+        location.reload();
       } },
-      { label: 'Отмена', cls: 'ghost' }
+      { label: 'Отмена', cls: '' }
     ]);
   }
 
-  /* ---------- стартовый экран ---------- */
-  function segValue(id) {
-    var active = document.querySelector('#' + id + ' .seg-btn.active');
-    return active ? active.dataset.value : null;
-  }
-
-  function bindSeg(id) {
-    var box = document.getElementById(id);
-    if (!box) return;
-    box.addEventListener('click', function (e) {
-      var btn = e.target.closest ? e.target.closest('.seg-btn') : null;
-      if (!btn || !box.contains(btn)) return;
-      var list = box.querySelectorAll('.seg-btn');
-      for (var i = 0; i < list.length; i++) list[i].classList.remove('active');
-      btn.classList.add('active');
-    });
-  }
-
-  function refreshContinueButton() {
-    var saved = State.load();
-    document.getElementById('btn-continue').classList.toggle('hidden', !saved);
-  }
-
-  function startGame() {
-    var name = (document.getElementById('input-name').value || '').trim();
-    if (!name) name = segValue('seg-gender') === 'f' ? 'Аня' : 'Виктор';
-    state = State.createState({
-      name: name,
-      gender: segValue('seg-gender'),
-      origin: segValue('seg-origin')
-    });
-    Engine.pushLog(state, 'Новая жизнь началась. ' + State.ORIGINS[state.origin].label + '.', 'info');
-    UI.showScreen('screen-game');
-    UI.showTab('actions');
-    refresh();
-  }
-
-  function continueGame() {
-    var saved = State.load();
-    if (!saved) { UI.toast('Сохранение не найдено'); return; }
-    state = saved;
-    UI.showScreen('screen-game');
-    UI.showTab('actions');
-    refresh();
-  }
-
-  /* ---------- инициализация ---------- */
-  function init() {
-    document.getElementById('version-label').textContent = 'v' + APP_VERSION;
-    bindSeg('seg-gender');
-    bindSeg('seg-origin');
-    refreshContinueButton();
-
-    document.getElementById('btn-new-game').addEventListener('click', function () {
-      if (State.load()) {
-        UI.modal('Есть сохранение', 'Начать новую жизнь? Старая будет стёрта.', [
-          { label: 'Начать новую', cls: 'primary', onClick: startGame },
-          { label: 'Отмена', cls: 'ghost' }
-        ]);
-      } else {
-        startGame();
-      }
-    });
-    document.getElementById('btn-continue').addEventListener('click', continueGame);
-
-    var tabs = document.querySelectorAll('.tab');
-    for (var i = 0; i < tabs.length; i++) {
-      tabs[i].addEventListener('click', function () {
-        var name = this.dataset.tab;
-        if (name === 'menu') { openMenu(); return; }
-        UI.showTab(name);
+  /* ======================= ПАРКОВКА И ТРАНСПОРТ ======================= */
+  _prepareParking() {
+    const rng = makeRNG(4242);
+    const spots = this.city.parkingSpots;
+    const types = ['sedan', 'hatch', 'suv', 'pickup', 'van', 'taxi', 'sports'];
+    // часть мест занята «ничьими» машинами
+    spots.forEach(s => {
+      if (!rng.chance(0.34)) return;
+      this.parkedSlots.push({
+        x: s.x, z: s.z, rot: s.rot + (rng.chance(0.5) ? 0 : Math.PI),
+        type: rng.pick(types),
+        color: CAR_COLORS[rng.int(0, CAR_COLORS.length - 1)],
+        live: null
       });
+    });
+    // плюс машины у обочин
+    for (let i = 0; i <= GRID; i++) {
+      for (let j = 0; j < GRID; j++) {
+        if (!rng.chance(0.34)) continue;
+        const x = roadX(i) + (rng.chance(0.5) ? 7.2 : -7.2);
+        const z = roadX(j) + CELL * rng.range(0.25, 0.75);
+        this.parkedSlots.push({
+          x, z, rot: rng.chance(0.5) ? 0 : Math.PI,
+          type: rng.pick(types),
+          color: CAR_COLORS[rng.int(0, CAR_COLORS.length - 1)],
+          live: null
+        });
+      }
+    }
+  }
+
+  _streamParked(px, pz) {
+    const IN = 95, OUT = 140;
+    const MAX_LIVE = this.engine.quality.traffic;   // не больше, чем трафика
+    let live = 0;
+    for (const slot of this.parkedSlots) if (slot.live) live++;
+
+    for (const slot of this.parkedSlots) {
+      const d = dist2D(slot.x, slot.z, px, pz);
+      if (!slot.live && d < IN && live < MAX_LIVE) {
+        live++;
+        const v = new Vehicle(slot.type, slot.color, slot.x, slot.z, slot.rot, true);
+        v.fuel = 25 + Math.random() * 50;
+        this.scene.add(v.mesh);
+        slot.live = v;
+        this.worldVehicles.push(v);
+      } else if (slot.live && d > OUT) {
+        if (this.player3d && this.player3d.vehicle === slot.live) continue;
+        this.scene.remove(slot.live.mesh);
+        slot.live.dispose();
+        this.worldVehicles = this.worldVehicles.filter(v => v !== slot.live);
+        slot.live = null;
+      }
+    }
+  }
+
+  _restoreOwnedVehicles() {
+    this.player.vehicles.forEach(rec => {
+      if (rec.stored) return;
+      if (this.worldVehicles.some(v => v.plate === rec.plate)) return;
+      const v = new Vehicle(rec.type, rec.color, rec.x, rec.z, rec.rot);
+      v.plate = rec.plate;
+      v.fuel = rec.fuel;
+      v.damage = rec.damage;
+      v.ownerPlate = rec.plate;
+      this.scene.add(v.mesh);
+      this.worldVehicles.push(v);
+    });
+  }
+
+  isVehicleSpawned(plate) {
+    return this.worldVehicles.some(v => v.plate === plate);
+  }
+
+  summonVehicle(plate) {
+    const rec = this.player.vehicles.find(v => v.plate === plate);
+    if (!rec) return;
+    const existing = this.worldVehicles.find(v => v.plate === plate);
+    if (existing) {
+      this.setWaypoint(existing.pos.x, existing.pos.z, VEHICLES[rec.type].name + ' ' + plate);
+      this.panels.close();
+      this.hud.toast('Метка поставлена на твою машину');
+      return;
+    }
+    const p = this.player3d.pos;
+    const ang = this.player3d.heading;
+    const sx = p.x + Math.sin(ang + 1.2) * 6;
+    const sz = p.z + Math.cos(ang + 1.2) * 6;
+    const v = new Vehicle(rec.type, rec.color, sx, sz, ang + Math.PI / 2);
+    v.plate = plate;
+    v.fuel = rec.fuel;
+    v.damage = rec.damage;
+    v.ownerPlate = plate;
+    this.scene.add(v.mesh);
+    this.worldVehicles.push(v);
+    rec.stored = false;
+    this.panels.close();
+    this.hud.toast('Транспорт подан', 'good');
+  }
+
+  buyVehicle(type) {
+    const spec = VEHICLES[type];
+    const color = CAR_COLORS[(Math.random() * CAR_COLORS.length) | 0];
+    const r = S.buyVehicle(this.player, type, spec.price, color);
+    if (!r.ok) { this.hud.toast(r.reason, 'bad'); return; }
+    this.hud.toast(`Куплен ${spec.name} · ${r.plate}`, 'good');
+    this.chat.add(`Вы купили ${spec.name} (${r.plate}) за ${fmtMoney(spec.price)}`, 'money');
+    S.questEvent(this.player, 'buy_vehicle');
+    this.panels.refresh();
+    this.saveGame();
+  }
+
+  sellVehicle(plate) {
+    const live = this.worldVehicles.find(v => v.plate === plate);
+    if (live) {
+      if (this.player3d.vehicle === live) this.player3d.exitVehicle();
+      this.scene.remove(live.mesh);
+      live.dispose();
+      this.worldVehicles = this.worldVehicles.filter(v => v !== live);
+    }
+    const r = S.sellVehicle(this.player, plate);
+    if (!r.ok) { this.hud.toast(r.reason, 'bad'); return; }
+    this.hud.toast(`Продано за ${fmtMoney(r.gain)}`, 'good');
+    this.panels.refresh();
+  }
+
+  /* ======================= ВЗАИМОДЕЙСТВИЕ ======================= */
+  _findInteraction() {
+    const p3 = this.player3d;
+    const px = p3.pos.x, pz = p3.pos.z;
+
+    if (p3.mode === 'drive') {
+      // в машине — проверяем точку смены и заправку
+      const job = this._jobStopNear(px, pz, 9);
+      if (job) return { kind: 'jobstop', label: 'Сдать точку', data: job };
+      const gas = this.city.nearestPoi(px, pz, x => x.type === 'gas');
+      if (gas && gas.dist < 14) return { kind: 'gas', label: 'Заправиться', data: gas.poi };
+      return { kind: 'exit', label: 'Выйти из машины' };
     }
 
-    document.addEventListener('visibilitychange', function () {
-      if (document.hidden) persist();
+    // транспорт рядом
+    let bestV = null, bd = 3.2;
+    for (const v of this.worldVehicles) {
+      if (v.driver) continue;
+      const d = dist2D(v.pos.x, v.pos.z, px, pz) - v.spec.W * 0.4;
+      if (d < bd) { bd = d; bestV = v; }
+    }
+
+    const job = this._jobStopNear(px, pz, 6);
+    if (job) return { kind: 'jobstop', label: 'Сдать точку', data: job };
+
+    const checks = [
+      ['shop', 5.5, x => x.type === 'shop', p => 'Войти: ' + p.name],
+      ['gas', 8, x => x.type === 'gas', () => 'Заправка / магазин'],
+      ['atm', 3.5, x => x.type === 'atm', () => 'Банкомат'],
+      ['hospital_heal', 7, x => x.type === 'hospital_heal', () => 'Лечение — 350 $'],
+      ['house', 6, x => x.type === 'house', p => S.ownsProperty(this.player, p.id)
+        ? 'Твой дом: ' + p.name : `Купить ${p.name} — ${fmtMoney(p.price)}`],
+      ['job', 6, x => x.type === 'job', p => 'Работа: ' + p.name],
+      ['mall', 7, x => x.type === 'mall', () => 'Автосалон и магазины'],
+      ['cityhall', 8, x => x.type === 'cityhall', () => 'Мэрия — получить права']
+    ];
+
+    for (const [kind, range, filter, label] of checks) {
+      const r = this.city.nearestPoi(px, pz, filter);
+      if (r && r.dist < range) {
+        if (bestV && bd < 1.6) break;
+        return { kind, label: label(r.poi), data: r.poi };
+      }
+    }
+
+    if (bestV) return { kind: 'enter', label: `Сесть: ${bestV.spec.name} (${bestV.plate})`, data: bestV };
+
+    const npc = this.peds.nearest(px, pz, 2.8);
+    if (npc) return { kind: 'npc', label: 'Поговорить: ' + npc.name, data: npc };
+
+    return null;
+  }
+
+  _jobStopNear(x, z, range) {
+    const job = this.player?.job;
+    if (!job) return null;
+    const stop = job.stops[job.current];
+    if (!stop) return null;
+    return dist2D(stop.x, stop.z, x, z) < range ? stop : null;
+  }
+
+  interact() {
+    if (this.paused || !this.player) return;
+    // всегда пересчитываем: кэш нужен только для подсказки на экране
+    const it = this._findInteraction();
+    if (!it) { this.hud.toast('Рядом ничего нет'); return; }
+    this._doInteraction(it);
+  }
+
+  _doInteraction(it) {
+    const p = this.player;
+    switch (it.kind) {
+      case 'enter': {
+        it.data.upgradeMesh(this.scene);
+        this.player3d.enterVehicle(it.data);
+        this.controls.setDrivingMode(true);
+        this.hud.showSpeedo(true);
+        S.questEvent(p, 'enter_vehicle');
+        this.hud.toast(`${it.data.spec.name} · ${Math.round(it.data.fuel)} л топлива`);
+        break;
+      }
+      case 'exit': {
+        const v = this.player3d.vehicle;
+        if (v && v.speedKmh > 12) { this.hud.toast('Сначала притормози', 'bad'); return; }
+        this.player3d.exitVehicle();
+        this.controls.setDrivingMode(false);
+        this.hud.showSpeedo(false);
+        if (v && v.ownerPlate) {
+          const rec = p.vehicles.find(r => r.plate === v.ownerPlate);
+          if (rec) { rec.x = v.pos.x; rec.z = v.pos.z; rec.rot = v.heading; rec.fuel = v.fuel; rec.damage = v.damage; rec.stored = false; }
+        }
+        break;
+      }
+      case 'shop':
+        this.panels.open('shop', it.data);
+        break;
+      case 'mall':
+        this.panels.open('dealership');
+        break;
+      case 'atm':
+        this.panels.open('bank');
+        break;
+      case 'gas':
+        this._refuelDialog();
+        break;
+      case 'hospital_heal': {
+        if (p.stats.health >= 99) { this.hud.toast('Ты здоров'); return; }
+        if (p.money < ECONOMY.hospitalFee) { this.hud.toast('Не хватает денег', 'bad'); return; }
+        p.money -= ECONOMY.hospitalFee;
+        p.stats.health = 100;
+        this.hud.toast('Подлечили. −' + ECONOMY.hospitalFee + ' $', 'good');
+        break;
+      }
+      case 'house': {
+        if (S.ownsProperty(p, it.data.id)) {
+          this.dialog(it.data.name, 'Твоя собственность.\nЗдесь можно отдохнуть и восстановить силы.', [
+            { label: 'Отдохнуть (+энергия)', cls: 'good', fn: () => {
+              p.stats.energy = 100;
+              p.stats.health = Math.min(100, p.stats.health + 25);
+              this.engine.time = (this.engine.time + 8) % 24;
+              this.hud.toast('Выспался. Энергия восстановлена', 'good');
+            } },
+            { label: 'Закрыть', cls: '' }
+          ]);
+        } else {
+          this.dialog(it.data.name, `Дом с гаражом.\nЦена: ${fmtMoney(it.data.price)}\nУ тебя: ${fmtMoney(p.money)}`, [
+            { label: 'Купить', cls: 'primary', fn: () => {
+              const r = S.buyProperty(p, it.data);
+              if (!r.ok) { this.hud.toast(r.reason, 'bad'); return; }
+              this.hud.toast('Поздравляю с покупкой!', 'gold');
+              this.chat.add(`Вы купили ${it.data.name} за ${fmtMoney(it.data.price)}`, 'money');
+              S.questEvent(p, 'buy_house');
+              this.saveGame();
+            } },
+            { label: 'Отмена', cls: '' }
+          ]);
+        }
+        break;
+      }
+      case 'cityhall': {
+        if (p.licenses.drive) { this.hud.toast('Права уже есть'); return; }
+        const cost = 800;
+        this.dialog('Мэрия', `Водительское удостоверение открывает работы таксистом,\nдальнобойщиком, водителем автобуса и в полиции.\n\nСтоимость: ${fmtMoney(cost)}`, [
+          { label: 'Получить права', cls: 'primary', fn: () => {
+            if (p.money < cost) { this.hud.toast('Не хватает денег', 'bad'); return; }
+            p.money -= cost;
+            p.licenses.drive = true;
+            this.hud.toast('Права получены!', 'gold');
+          } },
+          { label: 'Позже', cls: '' }
+        ]);
+        break;
+      }
+      case 'job': {
+        const jobId = it.data.job;
+        if (p.job) { this.panels.open('jobs'); return; }
+        const def = JOBS[jobId];
+        if (!def) { this.panels.open('jobs'); return; }
+        this.dialog(def.name, `${def.desc}\n\nТочек: ${def.stops}\nОплата: ${def.payPerStop} $ за точку + ${def.bonus} $ бонус`, [
+          { label: 'Выйти на смену', cls: 'primary', fn: () => this.startJob(jobId) },
+          { label: 'Все вакансии', cls: '', fn: () => this.panels.open('jobs') },
+          { label: 'Отмена', cls: '' }
+        ]);
+        break;
+      }
+      case 'jobstop':
+        this._completeStop();
+        break;
+      case 'npc': {
+        const n = it.data;
+        this.chat.add(n.line, '', n.name);
+        this.dialog(n.name, n.line, [
+          { label: 'Поболтать', cls: '', fn: () => {
+            p.stats.energy = Math.max(0, p.stats.energy - 1);
+            this.chat.add('Приятно поговорить. Удачи!', '', n.name);
+            p.rep += 0;
+          } },
+          { label: 'Дать 50 $', cls: 'good', fn: () => {
+            if (p.money < 50) { this.hud.toast('Нет денег', 'bad'); return; }
+            p.money -= 50; p.rep += 1;
+            this.chat.add(`${n.name} благодарит за помощь (+1 репутация)`, 'money');
+          } },
+          { label: 'Уйти', cls: '' }
+        ]);
+        break;
+      }
+    }
+    this.panels.refresh();
+  }
+
+  _refuelDialog() {
+    const v = this.player3d.vehicle;
+    if (!v) { this.hud.toast('Нужно быть в машине'); return; }
+    const need = Math.ceil(v.maxFuel - v.fuel);
+    if (need <= 0) { this.hud.toast('Бак полон'); return; }
+    const cost = Math.ceil(need * ECONOMY.fuelPricePerL);
+    const repairCost = Math.ceil(v.damage * 100 * ECONOMY.repairCostPerPercent);
+
+    const actions = [
+      { label: `Полный бак (${need} л) — ${fmtMoney(cost)}`, cls: 'primary', fn: () => {
+        if (this.player.money < cost) { this.hud.toast('Не хватает денег', 'bad'); return; }
+        this.player.money -= cost;
+        v.refuel(need);
+        this.hud.toast('Заправлено', 'good');
+      } }
+    ];
+    if (v.damage > 0.01) {
+      actions.push({ label: `Ремонт (${Math.round(v.damage * 100)}%) — ${fmtMoney(repairCost)}`, cls: 'good', fn: () => {
+        if (this.player.money < repairCost) { this.hud.toast('Не хватает денег', 'bad'); return; }
+        this.player.money -= repairCost;
+        v.repair();
+        this.hud.toast('Машина как новая', 'good');
+      } });
+    }
+    actions.push({ label: 'Отмена', cls: '' });
+    this.dialog('АЗС', `Топливо: ${Math.round(v.fuel)}/${v.maxFuel} л\nЦена: ${ECONOMY.fuelPricePerL} $/л`, actions);
+  }
+
+  /* ======================= РАБОТЫ ======================= */
+  startJob(jobId) {
+    const def = JOBS[jobId];
+    const stops = this._generateStops(def.stops);
+    const r = S.startJob(this.player, jobId, stops);
+    if (!r.ok) { this.hud.toast(r.reason, 'bad'); return; }
+
+    if (def.cargo) S.addItem(this.player, def.cargo, 1);
+    this.hud.toast(`Смена начата: ${def.name}`, 'good');
+    this.chat.add(`Смена начата: ${def.name}. Точек: ${def.stops}`, 'sys');
+    S.questEvent(this.player, 'job_start');
+    this.panels.close();
+    this._updateJobWaypoint();
+  }
+
+  _generateStops(n) {
+    const rng = makeRNG(Date.now() & 0xffff);
+    const out = [];
+    const px = this.player3d.pos.x, pz = this.player3d.pos.z;
+    for (let i = 0; i < n; i++) {
+      for (let t = 0; t < 40; t++) {
+        const bi = rng.int(0, GRID - 1), bj = rng.int(0, GRID - 1);
+        const x = roadX(bi) + CELL * 0.5 + rng.range(-12, 12);
+        const z = roadX(bj) + 11;
+        const d = dist2D(x, z, px, pz);
+        if (d > 90 && d < 700) { out.push({ x, z }); break; }
+      }
+    }
+    while (out.length < n) out.push({ x: px + 100, z: pz + 100 });
+    return out;
+  }
+
+  _completeStop() {
+    const def = JOBS[this.player.job.id];
+    const r = S.completeStop(this.player);
+    if (!r.ok) { this.hud.toast(r.reason, 'bad'); return; }
+
+    if (r.finished) {
+      if (def.cargo) S.removeItem(this.player, def.cargo, 99);
+      this.hud.toast(`Смена закрыта: +${fmtMoney(r.total)}`, 'gold');
+      this.chat.add(`Смена «${def.name}» завершена. Заработано ${fmtMoney(r.total)}`, 'money');
+      S.questEvent(this.player, 'job_finish');
+      this.waypoint = null;
+      this.hud.setTracker(null);
+      this.saveGame();
+    } else {
+      this.hud.toast(`Точка сдана: +${def.payPerStop} $`, 'good');
+      this._updateJobWaypoint();
+    }
+    this.panels.refresh();
+  }
+
+  cancelJob() {
+    const r = S.cancelJob(this.player);
+    if (!r.ok) { this.hud.toast(r.reason, 'bad'); return; }
+    this.hud.toast(`Смена брошена. +${fmtMoney(r.earned)}`);
+    this.waypoint = null;
+    this.hud.setTracker(null);
+    this.panels.refresh();
+  }
+
+  _updateJobWaypoint() {
+    const job = this.player.job;
+    if (!job) return;
+    const stop = job.stops[job.current];
+    if (stop) this.waypoint = { x: stop.x, z: stop.z, name: 'Точка смены' };
+  }
+
+  /* ======================= МАГАЗИН / ПРЕДМЕТЫ ======================= */
+  buyItem(id, qty) {
+    const r = S.buyItem(this.player, id, qty);
+    if (!r.ok) { this.hud.toast(r.reason, 'bad'); return; }
+    this.hud.toast(r.messages[0], 'good');
+    S.questEvent(this.player, 'buy_cat', { cat: ITEMS[id].cat });
+    this.panels.refresh();
+  }
+
+  sellItem(id) {
+    const r = S.sellItem(this.player, id, 1);
+    if (!r.ok) { this.hud.toast(r.reason, 'bad'); return; }
+    this.hud.toast(r.messages[0], 'good');
+    this.panels.refresh();
+  }
+
+  useItem(id) {
+    const r = S.useItem(this.player, id, { vehicle: this.player3d.vehicle });
+    if (!r.ok) { this.hud.toast(r.reason, 'bad'); return; }
+    this.hud.toast(r.messages[0], 'good');
+    if (r.worn) {
+      const map = { shirt: 'shirt', pants: 'pants', shoes: 'shoes' };
+      // смена внешнего вида по одежде
+      const colorByItem = { tshirt: 0xd8d8d2, jacket: 0x2b3340, suit: 0x1e2230, jeans: 0x33415c, sneakers: 0xe0e0da };
+      if (colorByItem[id] !== undefined && map[r.worn]) {
+        this.player.look[map[r.worn]] = colorByItem[id];
+        this.player3d.setLook(this.player.look);
+      }
+    }
+    S.questEvent(this.player, 'use_cat', { cat: ITEMS[id].cat });
+    this.panels.refresh();
+  }
+
+  /* ======================= ПРОЧЕЕ UI ======================= */
+  dialog(title, text, actions) {
+    $('dialog-title').textContent = title;
+    $('dialog-text').textContent = text;
+    const box = $('dialog-actions');
+    box.innerHTML = '';
+    actions.forEach(a => {
+      const b = document.createElement('button');
+      b.className = 'btn ' + (a.cls || '');
+      b.textContent = a.label;
+      b.onclick = () => {
+        $('dialog').classList.add('hidden');
+        if (a.fn) a.fn();
+        this.panels.refresh();
+      };
+      box.appendChild(b);
+    });
+    $('dialog').classList.remove('hidden');
+  }
+
+  setWaypoint(x, z, name) {
+    this.waypoint = { x, z, name: name || 'Метка' };
+    this.hud.toast('Маршрут: ' + this.waypoint.name);
+  }
+
+  openMap() { this.bigmap.show(); }
+  closeMap() { this.bigmap.hide(); }
+  toggleMap() { this.bigmap.visible ? this.bigmap.hide() : this.bigmap.show(); }
+
+  horn() {
+    const v = this.player3d?.vehicle;
+    if (!v) { this.hud.toast('Ты не в машине'); return; }
+    this.chat.add('*БИП-БИП*', 'sys');
+    // распугиваем пешеходов рядом
+    this.peds.list.forEach(n => {
+      if (dist2D(n.h.root.position.x, n.h.root.position.z, v.pos.x, v.pos.z) < 12) {
+        n.speed = Math.min(2.4, n.speed * 1.6);
+        n.pauseT = 0;
+      }
     });
   }
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-  } else {
-    init();
+  toggleLights() {
+    const v = this.player3d?.vehicle;
+    if (!v) { this.hud.toast('Ты не в машине'); return; }
+    v.lightsOn = !v.lightsOn;
+    this.hud.toast(v.lightsOn ? 'Фары включены' : 'Фары выключены');
   }
-})();
+
+  setQuality(name) {
+    this.engine.setQuality(name);
+    localStorage.setItem('rp:quality', name);
+    this.traffic.setMax(this.engine.quality.traffic);
+    this.peds.setMax(this.engine.quality.npc);
+    this.hud.toast('Качество: ' + name);
+  }
+
+  connectServer(url) { this.net.connect(url); }
+
+  /* ======================= СОХРАНЕНИЕ ======================= */
+  saveGame(notify) {
+    if (!this.player) return;
+    this.player.pos = { x: this.player3d.pos.x, z: this.player3d.pos.z, rot: this.player3d.heading };
+    this.player.stats2.distWalked = this.player3d.distWalked;
+    this.player.stats2.distDriven = this.player3d.distDriven;
+    // фиксируем состояние своих машин
+    this.player.vehicles.forEach(rec => {
+      const live = this.worldVehicles.find(v => v.plate === rec.plate);
+      if (live) { rec.x = live.pos.x; rec.z = live.pos.z; rec.rot = live.heading; rec.fuel = live.fuel; rec.damage = live.damage; rec.stored = false; }
+    });
+    const ok = S.save(this.player);
+    if (notify) this.hud.toast(ok ? 'Игра сохранена' : 'Не удалось сохранить', ok ? 'good' : 'bad');
+  }
+
+  /* ======================= ЦИКЛ ======================= */
+  update(dt) {
+    const eng = this.engine;
+
+    if (this.paused || !this.player) {
+      eng.updateDayNight(dt, null);
+      return;
+    }
+
+    const p = this.player;
+    const p3 = this.player3d;
+    const driving = p3.mode === 'drive';
+
+    // ввод
+    const input = this.controls.poll(driving);
+
+    // выход из машины по кнопке прыжка
+    if (driving && input.jump) {
+      if (!this._jumpLatch) { this._jumpLatch = true; this._doInteraction({ kind: 'exit' }); }
+    } else if (!input.jump) {
+      this._jumpLatch = false;
+    }
+
+    p3.update(dt, input, this.city);
+
+    // мир
+    eng.updateDayNight(dt, p3.pos);
+    this.city.updateCulling(p3.pos.x, p3.pos.z, eng.quality.chunkR);
+    this.city.setNight(eng.nightAmount);
+
+    this._streamParked(p3.pos.x, p3.pos.z);
+    this.traffic.update(dt, p3.pos.x, p3.pos.z, p3.vehicle, eng.nightAmount);
+    this.peds.update(dt, p3.pos.x, p3.pos.z);
+    this.net.update(dt);
+    this.chat.ambient(dt);
+
+    // припаркованные машины: только свет
+    for (const v of this.worldVehicles) {
+      if (v.driver) continue;
+      v.lightsOn = false;
+      if (v.mesh.userData.brakeMat) v.mesh.userData.brakeMat.emissiveIntensity = 0;
+    }
+
+    // потребности (игровое время идёт быстрее)
+    const gameSeconds = dt * (1 / eng.timeScale) / 60;
+    const died = S.tickNeeds(p, gameSeconds * 2.2);
+    if (died) this._onDeath();
+
+    // авто-прогресс квестов
+    this._visitAcc += dt;
+    if (this._visitAcc > 1.2) {
+      this._visitAcc = 0;
+      this._checkVisits();
+      S.questEvent(p, 'money');
+      S.questEvent(p, 'drive_dist');
+      p.stats2.distDriven = p3.distDriven;
+      p.stats2.distWalked = p3.distWalked;
+    }
+
+    // UI
+    this.hud.update(p, eng, p3);
+    this.hud.showSpeedo(driving);
+    if (driving) {
+      this.hud.drawSpeedo(p3.vehicle);
+      if (p3.vehicle.fuel <= 0 && !this._fuelWarned) {
+        this._fuelWarned = true;
+        this.hud.toast('Бак пуст! Нужна канистра или эвакуатор', 'bad');
+      }
+      if (p3.vehicle.fuel > 0) this._fuelWarned = false;
+    }
+
+    this.hud.drawMinimap(p3, this.city, this.traffic, this._mapMarkers(), eng.nightAmount);
+    if (this.bigmap.visible) this.bigmap.draw();
+
+    // подсказка взаимодействия
+    this.currentInteraction = this._findInteraction();
+    this.hud.setPrompt(this.currentInteraction
+      ? `<b>E</b> · ${this.currentInteraction.label}` : null);
+
+    // трекер
+    this._updateTracker();
+
+    // автосохранение
+    this._saveAcc += dt;
+    if (this._saveAcc > 30) { this._saveAcc = 0; this.saveGame(false); }
+  }
+
+  _mapMarkers() {
+    const out = [];
+    const px = this.player3d.pos.x, pz = this.player3d.pos.z;
+    this.city.pois.forEach(poi => {
+      if (Math.abs(poi.x - px) > 180 || Math.abs(poi.z - pz) > 180) return;
+      const c = { shop: '#49a0ff', gas: '#ffb020', atm: '#3ddc84', job: '#ffcf4a', house: '#9b7bff' }[poi.type];
+      if (c) out.push({ x: poi.x, z: poi.z, color: c });
+    });
+    if (this.waypoint) out.push({ x: this.waypoint.x, z: this.waypoint.z, color: '#ff5db8' });
+    const job = this.player.job;
+    if (job && job.stops[job.current]) {
+      out.push({ x: job.stops[job.current].x, z: job.stops[job.current].z, color: '#ffffff' });
+    }
+    return out;
+  }
+
+  _updateTracker() {
+    const p = this.player;
+    const p3 = this.player3d;
+    if (p.job) {
+      const def = JOBS[p.job.id];
+      const stop = p.job.stops[p.job.current];
+      const d = stop ? dist2D(stop.x, stop.z, p3.pos.x, p3.pos.z) : 0;
+      this.hud.setTracker(def.name,
+        `Точка ${p.job.current + 1}/${p.job.stops.length} · ${fmtMoney(p.job.earned)}`, d);
+      return;
+    }
+    if (this.waypoint) {
+      const d = dist2D(this.waypoint.x, this.waypoint.z, p3.pos.x, p3.pos.z);
+      if (d < 12) { this.waypoint = null; this.hud.setTracker(null); return; }
+      this.hud.setTracker('Маршрут', this.waypoint.name, d);
+      return;
+    }
+    const q = S.activeQuests(p)[0];
+    if (q) {
+      const st = S.questState(p, q.id);
+      this.hud.setTracker(q.name, q.steps[st.step]?.text || '', null);
+    } else {
+      this.hud.setTracker(null);
+    }
+  }
+
+  _checkVisits() {
+    const p = this.player;
+    const p3 = this.player3d;
+    ['park', 'plaza', 'cityhall', 'hospital'].forEach(type => {
+      const r = this.city.nearestPoi(p3.pos.x, p3.pos.z, x => x.type === type);
+      if (r && r.dist < 22 && !p.stats2.visited[type]) {
+        p.stats2.visited[type] = true;
+        const done = S.questEvent(p, 'visit', { poi: type });
+        this._announceQuests(done);
+      }
+    });
+  }
+
+  _announceQuests(list) {
+    (list || []).forEach(q => {
+      this.hud.toast(`Задание выполнено: ${q.name} (+${q.reward.money} $)`, 'gold');
+      this.chat.add(`✅ ${q.name} — награда ${fmtMoney(q.reward.money)}, ${q.reward.xp} XP`, 'money');
+    });
+  }
+
+  _onDeath() {
+    const r = S.respawn(this.player);
+    const hosp = this.city.nearestPoi(this.player3d.pos.x, this.player3d.pos.z, x => x.type === 'hospital');
+    if (this.player3d.vehicle) {
+      this.player3d.exitVehicle();
+      this.controls.setDrivingMode(false);
+    }
+    if (hosp) this.player3d.teleport(hosp.poi.x, hosp.poi.z + 6, 0);
+    this.hud.toast(`Ты очнулся в больнице. Счёт за лечение ${fmtMoney(r.fee)}`, 'bad');
+    this.chat.add('Медики подобрали тебя на улице. Следи за здоровьем.', 'sys');
+  }
+}
+
+/* ======================= СТАРТ ======================= */
+const game = new Game();
+window.__game = game;
+
+game.boot().catch(err => {
+  console.error(err);
+  $('load-text').textContent = 'Ошибка загрузки: ' + err.message;
+  $('load-hint').textContent = 'Открой консоль браузера для подробностей.';
+});
+
+// сохраняем при сворачивании
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && game.player) game.saveGame(false);
+});
+window.addEventListener('pagehide', () => { if (game.player) game.saveGame(false); });

@@ -3,107 +3,201 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
-  <meta name="theme-color" content="#0f1117">
-  <title>RP-igra</title>
-  <link rel="stylesheet" href="css/style.css">
+  <meta name="theme-color" content="#05070c">
+  <title>City RP</title>
+  <link rel="icon" href="data:image/png;base64,iVBORw0KGgo=">
+  <link rel="stylesheet" href="css/ui.css">
 </head>
 <body>
-  <div id="app">
-    <!-- ЭКРАН: СТАРТ / СОЗДАНИЕ ПЕРСОНАЖА -->
-    <section id="screen-start" class="screen active">
-      <div class="start-wrap">
-        <h1 class="logo">RP-igra</h1>
-        <p class="tagline">Симулятор жизни</p>
 
-        <div class="card">
-          <label class="field">
-            <span class="field-label">Имя персонажа</span>
-            <input id="input-name" type="text" maxlength="20" placeholder="Виктор" autocomplete="off">
-          </label>
+<canvas id="gl"></canvas>
 
-          <div class="field">
-            <span class="field-label">Пол</span>
-            <div class="seg" id="seg-gender">
-              <button class="seg-btn active" data-value="m">Мужской</button>
-              <button class="seg-btn" data-value="f">Женский</button>
-            </div>
-          </div>
+<!-- ================= ЗАГРУЗКА ================= -->
+<div id="loader" class="overlay">
+  <div class="loader-box">
+    <h1 class="brand">CITY<span>RP</span></h1>
+    <div class="bar-outer"><div id="load-bar" class="bar-inner"></div></div>
+    <p id="load-text">Инициализация…</p>
+    <p class="hint" id="load-hint"></p>
+  </div>
+</div>
 
-          <div class="field">
-            <span class="field-label">Старт</span>
-            <div class="seg vertical" id="seg-origin">
-              <button class="seg-btn active" data-value="poor">Из бедной семьи — мало денег, много упорства</button>
-              <button class="seg-btn" data-value="mid">Средний класс — всего по чуть-чуть</button>
-              <button class="seg-btn" data-value="rich">Обеспеченная семья — деньги есть, мотивации нет</button>
-            </div>
-          </div>
-        </div>
+<!-- ================= ГЛАВНОЕ МЕНЮ ================= -->
+<div id="menu" class="overlay hidden">
+  <div class="menu-box">
+    <h1 class="brand">CITY<span>RP</span></h1>
+    <p class="sub">Открытый город · ролевая игра</p>
+    <button id="btn-continue" class="btn primary hidden">Продолжить</button>
+    <button id="btn-new" class="btn primary">Новая игра</button>
+    <button id="btn-servers" class="btn">Серверы · мультиплеер</button>
+    <button id="btn-settings" class="btn">Настройки</button>
+    <p class="ver" id="menu-version">v0.2.0</p>
+  </div>
+</div>
 
-        <button id="btn-new-game" class="btn primary big">Начать жизнь</button>
-        <button id="btn-continue" class="btn ghost big hidden">Продолжить</button>
-        <p class="version" id="version-label">v0.1.0</p>
-      </div>
-    </section>
+<!-- ================= СОЗДАНИЕ ПЕРСОНАЖА ================= -->
+<div id="creator" class="overlay hidden">
+  <div class="creator-wrap">
+    <h2>Создание персонажа</h2>
+    <div class="creator-grid">
+      <div class="creator-preview"><canvas id="cc-canvas"></canvas></div>
+      <div class="creator-form">
+        <label class="field">
+          <span>Имя и фамилия</span>
+          <input id="cc-name" type="text" maxlength="24" placeholder="Иван Петров" autocomplete="off">
+        </label>
 
-    <!-- ЭКРАН: ИГРА -->
-    <section id="screen-game" class="screen">
-      <header class="topbar">
-        <div class="topbar-row">
-          <div class="who">
-            <span id="hud-name" class="hud-name">—</span>
-            <span id="hud-age" class="hud-sub">—</span>
-          </div>
-          <div class="money">
-            <span id="hud-money">0 ₽</span>
+        <div class="field">
+          <span>Пол</span>
+          <div class="seg" data-seg="gender">
+            <button class="seg-btn active" data-v="m">Мужской</button>
+            <button class="seg-btn" data-v="f">Женский</button>
           </div>
         </div>
-        <div class="topbar-row small">
-          <span id="hud-day">День 1</span>
-          <span id="hud-job">Безработный</span>
+
+        <div class="field"><span>Тон кожи</span><div class="swatches" id="cc-skin"></div></div>
+        <div class="field"><span>Волосы</span><div class="swatches" id="cc-hair"></div></div>
+        <div class="field">
+          <span>Причёска</span>
+          <div class="seg" data-seg="hairStyle">
+            <button class="seg-btn active" data-v="0">1</button>
+            <button class="seg-btn" data-v="1">2</button>
+            <button class="seg-btn" data-v="2">3</button>
+            <button class="seg-btn" data-v="3">4</button>
+          </div>
         </div>
-      </header>
+        <div class="field"><span>Верх</span><div class="swatches" id="cc-shirt"></div></div>
+        <div class="field"><span>Низ</span><div class="swatches" id="cc-pants"></div></div>
 
-      <div class="stats" id="stats"></div>
-
-      <main class="content">
-        <div class="tab-panel active" data-panel="actions">
-          <div id="actions-list" class="actions"></div>
-        </div>
-
-        <div class="tab-panel" data-panel="skills">
-          <div id="skills-list" class="skills"></div>
-        </div>
-
-        <div class="tab-panel" data-panel="log">
-          <div id="log-list" class="log"></div>
-        </div>
-      </main>
-
-      <nav class="tabs">
-        <button class="tab active" data-tab="actions">Действия</button>
-        <button class="tab" data-tab="skills">Навыки</button>
-        <button class="tab" data-tab="log">Дневник</button>
-        <button class="tab" data-tab="menu">Меню</button>
-      </nav>
-    </section>
-
-    <!-- МОДАЛКА -->
-    <div id="modal" class="modal hidden">
-      <div class="modal-box">
-        <h2 id="modal-title">Заголовок</h2>
-        <p id="modal-text">Текст</p>
-        <div id="modal-actions" class="modal-actions"></div>
+        <label class="field">
+          <span>Рост <b id="cc-h-val">178</b> см</span>
+          <input id="cc-height" type="range" min="155" max="200" value="178">
+        </label>
+        <label class="field">
+          <span>Телосложение</span>
+          <input id="cc-build" type="range" min="70" max="135" value="100">
+        </label>
       </div>
     </div>
+    <div class="creator-actions">
+      <button id="cc-random" class="btn">Случайно</button>
+      <button id="cc-back" class="btn">Назад</button>
+      <button id="cc-start" class="btn primary">В город</button>
+    </div>
+  </div>
+</div>
 
-    <!-- ТОСТ -->
-    <div id="toast" class="toast hidden"></div>
+<!-- ================= HUD ================= -->
+<div id="hud" class="hidden">
+  <!-- верх слева: деньги, уровень -->
+  <div class="hud-top-left">
+    <div class="money-chip"><span id="hud-money">0 $</span></div>
+    <div class="sub-chip">
+      <span id="hud-bank">Банк 0 $</span>
+      <span class="dot">·</span>
+      <span id="hud-level">Ур. 1</span>
+    </div>
   </div>
 
-  <script src="js/state.js"></script>
-  <script src="js/data.js"></script>
-  <script src="js/engine.js"></script>
-  <script src="js/ui.js"></script>
-  <script src="js/main.js"></script>
+  <!-- верх справа: часы, FPS -->
+  <div class="hud-top-right">
+    <div class="clock-chip"><span id="hud-clock">09:30</span></div>
+    <div class="sub-chip right"><span id="hud-fps">60 fps</span></div>
+  </div>
+
+  <!-- полоски состояния -->
+  <div class="hud-stats" id="hud-stats"></div>
+
+  <!-- миникарта -->
+  <div class="minimap-wrap">
+    <canvas id="minimap" width="200" height="200"></canvas>
+    <div class="minimap-ring"></div>
+    <div id="mm-street" class="mm-street">—</div>
+  </div>
+
+  <!-- спидометр -->
+  <div id="speedo" class="speedo hidden">
+    <canvas id="speedo-canvas" width="190" height="190"></canvas>
+    <div class="speedo-val"><span id="speed-num">0</span><small>км/ч</small></div>
+    <div class="speedo-fuel">
+      <div class="fuel-bar"><div id="fuel-fill"></div></div>
+      <span id="fuel-txt">80 л</span>
+    </div>
+  </div>
+
+  <!-- подсказка взаимодействия -->
+  <div id="prompt" class="prompt hidden"></div>
+
+  <!-- уведомления -->
+  <div id="toasts" class="toasts"></div>
+
+  <!-- трекер задания -->
+  <div id="tracker" class="tracker hidden">
+    <div class="tracker-title" id="tracker-title">Задание</div>
+    <div class="tracker-step" id="tracker-step"></div>
+    <div class="tracker-dist" id="tracker-dist"></div>
+  </div>
+
+  <!-- чат -->
+  <div id="chat" class="chat">
+    <div id="chat-log" class="chat-log"></div>
+    <div class="chat-input-row hidden" id="chat-row">
+      <input id="chat-input" type="text" maxlength="120" placeholder="Сообщение… (/me, /do, /pay)">
+      <button id="chat-send">▶</button>
+    </div>
+  </div>
+
+  <!-- сенсорное управление -->
+  <div id="touch" class="touch">
+    <div id="stick" class="stick"><div id="stick-knob" class="stick-knob"></div></div>
+    <div class="buttons">
+      <button class="rb" id="b-action">E</button>
+      <button class="rb" id="b-run">БЕГ</button>
+      <button class="rb" id="b-jump">▲</button>
+      <button class="rb small" id="b-brake">ТОРМ</button>
+      <button class="rb small" id="b-horn">СИГ</button>
+      <button class="rb small" id="b-light">СВЕТ</button>
+    </div>
+  </div>
+
+  <!-- нижняя панель -->
+  <nav class="dock">
+    <button class="dock-btn" data-panel="map">🗺<span>Карта</span></button>
+    <button class="dock-btn" data-panel="inventory">🎒<span>Вещи</span></button>
+    <button class="dock-btn" data-panel="jobs">💼<span>Работа</span></button>
+    <button class="dock-btn" data-panel="phone">📱<span>Меню</span></button>
+    <button class="dock-btn" id="dock-chat">💬<span>Чат</span></button>
+  </nav>
+</div>
+
+<!-- ================= ПАНЕЛИ ================= -->
+<div id="panel" class="panel hidden">
+  <div class="panel-head">
+    <h3 id="panel-title">Панель</h3>
+    <button id="panel-close" class="icon-btn">✕</button>
+  </div>
+  <div id="panel-body" class="panel-body"></div>
+</div>
+
+<!-- ================= ПОЛНАЯ КАРТА ================= -->
+<div id="bigmap" class="overlay hidden">
+  <div class="bigmap-head">
+    <h3>Карта города</h3>
+    <button id="bigmap-close" class="icon-btn">✕</button>
+  </div>
+  <canvas id="bigmap-canvas"></canvas>
+  <div class="bigmap-legend" id="bigmap-legend"></div>
+</div>
+
+<!-- ================= ДИАЛОГ ================= -->
+<div id="dialog" class="overlay hidden">
+  <div class="dialog-box">
+    <h3 id="dialog-title">—</h3>
+    <p id="dialog-text">—</p>
+    <div id="dialog-actions" class="dialog-actions"></div>
+  </div>
+</div>
+
+<script type="module" src="js/main.js"></script>
 </body>
 </html>

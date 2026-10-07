@@ -1,11 +1,11 @@
-/* tools/serve.js — простой статический сервер для локального превью www/ */
-'use strict';
+/* serve.js — статический dev-сервер для www/ */
 
-const http = require('http');
-const fs = require('fs');
-const path = require('path');
+import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const ROOT = path.join(__dirname, '..', 'www');
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'www');
 const PORT = process.env.PORT || 8080;
 
 const MIME = {
@@ -13,20 +13,15 @@ const MIME = {
   '.css': 'text/css; charset=utf-8',
   '.js': 'application/javascript; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.svg': 'image/svg+xml',
-  '.ico': 'image/x-icon'
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml', '.ico': 'image/x-icon'
 };
 
 http.createServer((req, res) => {
   let urlPath = decodeURIComponent(req.url.split('?')[0]);
   if (urlPath === '/') urlPath = '/index.html';
   const filePath = path.join(ROOT, path.normalize(urlPath).replace(/^(\.\.[/\\])+/, ''));
+  if (!filePath.startsWith(ROOT)) { res.writeHead(403); res.end('403'); return; }
 
-  if (!filePath.startsWith(ROOT)) {
-    res.writeHead(403); res.end('403'); return;
-  }
   fs.readFile(filePath, (err, data) => {
     if (err) {
       res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
@@ -39,6 +34,4 @@ http.createServer((req, res) => {
     });
     res.end(data);
   });
-}).listen(PORT, '0.0.0.0', () => {
-  console.log('RP-igra dev server: http://0.0.0.0:' + PORT);
-});
+}).listen(PORT, '0.0.0.0', () => console.log('City RP dev: http://0.0.0.0:' + PORT));

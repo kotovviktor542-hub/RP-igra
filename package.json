@@ -1,16 +1,19 @@
 {
-  "name": "rp-igra",
-  "version": "0.1.0",
+  "name": "city-rp",
+  "version": "0.2.0",
   "private": true,
-  "description": "RP-igra — симулятор жизни (Capacitor + vanilla JS)",
+  "type": "module",
+  "description": "City RP — 3D-симулятор жизни в открытом городе (Three.js + Capacitor)",
   "scripts": {
     "serve": "node tools/serve.js",
     "check": "node tools/check.js",
-    "test": "node tools/check.js"
+    "test": "node tools/check.js",
+    "sync": "node tools/vendor.js && npx cap sync android"
   },
   "dependencies": {
     "@capacitor/android": "^6.2.0",
-    "@capacitor/core": "^6.2.0"
+    "@capacitor/core": "^6.2.0",
+    "three": "0.160.1"
   },
   "devDependencies": {
     "@capacitor/cli": "^6.2.0"

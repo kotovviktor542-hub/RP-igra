@@ -1,0 +1,504 @@
+/* panels.js — выдвижные панели: инвентарь, магазин, работы, телефон/меню,
+   автосалон, недвижимость, банк, заправка, настройки, серверы. */
+
+import { ITEMS, JOBS, QUESTS, ECONOMY, DEALERSHIP } from '../game/content.js';
+import { VEHICLES, CAR_COLORS } from '../entities/vehicle.js';
+import * as S from '../game/state.js';
+import { fmtMoney, dist2D } from '../core/utils.js';
+
+const $ = id => document.getElementById(id);
+const el = (tag, cls, html) => {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (html !== undefined) n.innerHTML = html;
+  return n;
+};
+
+const CAT_ICON = {
+  food: '🍔', med: '💊', tech: '📱', tool: '🔧',
+  cloth: '👕', cargo: '📦', misc: '🎲'
+};
+
+export class Panels {
+  constructor(game) {
+    this.game = game;
+    this.root = $('panel');
+    this.body = $('panel-body');
+    this.title = $('panel-title');
+    this.current = null;
+    $('panel-close').addEventListener('click', () => this.close());
+
+    document.querySelectorAll('.dock-btn[data-panel]').forEach(b => {
+      b.addEventListener('click', () => this.toggle(b.dataset.panel));
+    });
+  }
+
+  close() {
+    this.root.classList.add('hidden');
+    this.current = null;
+    document.querySelectorAll('.dock-btn').forEach(b => b.classList.remove('active'));
+  }
+
+  toggle(name, arg) {
+    if (this.current === name && !arg) { this.close(); return; }
+    this.open(name, arg);
+  }
+
+  open(name, arg) {
+    this.current = name;
+    this.root.classList.remove('hidden');
+    this.body.scrollTop = 0;
+    document.querySelectorAll('.dock-btn').forEach(b =>
+      b.classList.toggle('active', b.dataset.panel === name));
+
+    const fn = this['render_' + name];
+    if (fn) fn.call(this, arg);
+    else { this.title.textContent = name; this.body.innerHTML = '<div class="empty">Пусто</div>'; }
+  }
+
+  refresh() { if (this.current) this.open(this.current, this._arg); }
+
+  /* ======================= ИНВЕНТАРЬ ======================= */
+  render_inventory() {
+    const p = this.game.player;
+    this.title.textContent = 'Инвентарь';
+    const b = this.body;
+    b.innerHTML = '';
+
+    const w = S.invWeight(p);
+    const head = el('div', 'row');
+    head.innerHTML = `<div class="ic">⚖️</div><div class="grow">
+      <div class="t">${w.toFixed(1)} / ${ECONOMY.inventoryMaxWeight} кг</div>
+      <div class="d">Наличные ${fmtMoney(p.money)} · Банк ${fmtMoney(p.bank)}</div></div>`;
+    b.appendChild(head);
+
+    if (!p.inventory.length) {
+      b.appendChild(el('div', 'empty', 'Карманы пусты. Загляни в магазин.'));
+      return;
+    }
+
+    const byCat = {};
+    p.inventory.forEach(it => {
+      const cat = ITEMS[it.id]?.cat || 'misc';
+      (byCat[cat] || (byCat[cat] = [])).push(it);
+    });
+
+    Object.keys(byCat).forEach(cat => {
+      b.appendChild(el('div', 'sec', (CAT_ICON[cat] || '') + ' ' + cat));
+      byCat[cat].forEach(entry => {
+        const it = ITEMS[entry.id];
+        const row = el('div', 'row');
+        row.innerHTML = `<div class="ic">${CAT_ICON[it.cat] || '•'}</div>
+          <div class="grow"><div class="t">${it.name} ×${entry.qty}</div>
+          <div class="d">${(it.weight * entry.qty).toFixed(1)} кг${this._effects(it)}</div></div>`;
+        const actions = el('div', 'btn-row');
+
+        const usable = it.hunger || it.thirst || it.health || it.energy || it.fuel || it.repair || it.wear;
+        if (usable) {
+          const u = el('button', 'btn sm good', it.wear ? 'Надеть' : 'Исп.');
+          u.onclick = () => this.game.useItem(entry.id);
+          actions.appendChild(u);
+        }
+        if (!it.questOnly) {
+          const s = el('button', 'btn sm', 'Продать');
+          s.onclick = () => this.game.sellItem(entry.id);
+          actions.appendChild(s);
+        }
+        const d = el('button', 'btn sm danger', '✕');
+        d.onclick = () => { S.removeItem(p, entry.id, 1); this.refresh(); };
+        actions.appendChild(d);
+        row.appendChild(actions);
+        b.appendChild(row);
+      });
+    });
+  }
+
+  _effects(it) {
+    const parts = [];
+    if (it.hunger) parts.push(`сытость +${it.hunger}`);
+    if (it.thirst) parts.push(`жажда +${it.thirst}`);
+    if (it.energy) parts.push(`энергия +${it.energy}`);
+    if (it.health) parts.push(`здоровье ${it.health > 0 ? '+' : ''}${it.health}`);
+    if (it.fuel) parts.push(`топливо +${it.fuel} л`);
+    if (it.repair) parts.push('ремонт авто');
+    return parts.length ? ' · ' + parts.join(', ') : '';
+  }
+
+  /* ======================= МАГАЗИН ======================= */
+  render_shop(poi) {
+    this._arg = poi;
+    const p = this.game.player;
+    this.title.textContent = poi ? poi.name : 'Магазин';
+    const b = this.body;
+    b.innerHTML = '';
+
+    b.appendChild(el('div', 'sec', `Наличные: ${fmtMoney(p.money)} · вес ${S.invWeight(p).toFixed(1)} кг`));
+
+    const list = S.shopCatalog(poi?.shopKind || 'market');
+    list.forEach(it => {
+      const row = el('div', 'row');
+      const afford = p.money >= it.price;
+      const fits = S.canCarry(p, it.id, 1);
+      if (!afford || !fits) row.classList.add('locked');
+      row.innerHTML = `<div class="ic">${CAT_ICON[it.cat] || '•'}</div>
+        <div class="grow"><div class="t">${it.name}</div>
+        <div class="d">${it.weight} кг${this._effects(it)}</div></div>
+        <div class="price">${it.price} $</div>`;
+      const buy = el('button', 'btn sm primary', 'Купить');
+      buy.disabled = !afford || !fits;
+      buy.onclick = () => this.game.buyItem(it.id, 1);
+      row.appendChild(buy);
+      b.appendChild(row);
+    });
+  }
+
+  /* ======================= РАБОТЫ ======================= */
+  render_jobs() {
+    const p = this.game.player;
+    this.title.textContent = 'Работа';
+    const b = this.body;
+    b.innerHTML = '';
+
+    if (p.job) {
+      const def = JOBS[p.job.id];
+      const done = p.job.current;
+      const total = p.job.stops.length;
+      const row = el('div', 'row active');
+      row.innerHTML = `<div class="ic">${def.icon}</div><div class="grow">
+        <div class="t">${def.name} — смена идёт</div>
+        <div class="d">Точек: ${done}/${total} · заработано ${fmtMoney(p.job.earned)}</div></div>`;
+      b.appendChild(row);
+
+      const nav = el('button', 'btn primary', 'Показать точку на карте');
+      nav.onclick = () => { this.close(); this.game.openMap(); };
+      b.appendChild(nav);
+      const stop = el('button', 'btn danger', 'Бросить смену (−50% оплаты)');
+      stop.onclick = () => this.game.cancelJob();
+      b.appendChild(stop);
+      return;
+    }
+
+    b.appendChild(el('div', 'sec', 'Доступные вакансии'));
+    Object.entries(JOBS).forEach(([id, def]) => {
+      const row = el('div', 'row');
+      const locked = (def.reqRep && p.rep < def.reqRep) ||
+                     (def.reqLicense && !p.licenses[def.reqLicense]);
+      if (locked) row.classList.add('locked');
+      const reason = def.reqRep && p.rep < def.reqRep ? `нужна репутация ${def.reqRep}`
+        : (def.reqLicense && !p.licenses[def.reqLicense] ? 'нужны права' : '');
+      row.innerHTML = `<div class="ic">${def.icon}</div><div class="grow">
+        <div class="t">${def.name}</div>
+        <div class="d">${locked ? '🔒 ' + reason : def.desc}</div>
+        <div class="d">${def.stops} точек · ${def.payPerStop} $/точка · бонус ${def.bonus} $ · выполнено ${p.jobsDone[id] || 0}</div>
+        </div>`;
+      const go = el('button', 'btn sm primary', 'Начать');
+      go.disabled = locked;
+      go.onclick = () => this.game.startJob(id);
+      row.appendChild(go);
+      b.appendChild(row);
+    });
+
+    b.appendChild(el('div', 'sec', 'Статистика'));
+    const st = el('div');
+    st.innerHTML = `
+      <div class="kv"><span>Репутация</span><b>${p.rep}</b></div>
+      <div class="kv"><span>Уровень</span><b>${p.level} (${p.xp}/${ECONOMY.levelXp(p.level)} XP)</b></div>
+      <div class="kv"><span>Права</span><b>${p.licenses.drive ? 'есть' : 'нет'}</b></div>
+      <div class="kv"><span>Проехал</span><b>${((p.stats2.distDriven || 0) / 1000).toFixed(1)} км</b></div>
+      <div class="kv"><span>Прошёл</span><b>${((p.stats2.distWalked || 0) / 1000).toFixed(2)} км</b></div>`;
+    b.appendChild(st);
+  }
+
+  /* ======================= ТЕЛЕФОН / МЕНЮ ======================= */
+  render_phone() {
+    const p = this.game.player;
+    this.title.textContent = p.name;
+    const b = this.body;
+    b.innerHTML = '';
+
+    const info = el('div');
+    info.innerHTML = `
+      <div class="kv"><span>Наличные</span><b style="color:var(--good)">${fmtMoney(p.money)}</b></div>
+      <div class="kv"><span>Счёт в банке</span><b>${fmtMoney(p.bank)}</b></div>
+      <div class="kv"><span>Уровень</span><b>${p.level}</b></div>
+      <div class="kv"><span>Репутация</span><b>${p.rep}</b></div>
+      <div class="kv"><span>Транспорт</span><b>${p.vehicles.length}</b></div>
+      <div class="kv"><span>Недвижимость</span><b>${p.properties.length}</b></div>
+      <div class="kv"><span>В игре</span><b>${Math.floor(p.playtime / 60)} мин</b></div>`;
+    b.appendChild(info);
+
+    b.appendChild(el('div', 'sec', 'Разделы'));
+    const nav = [
+      ['🚗 Мой транспорт', 'vehicles'],
+      ['🏠 Недвижимость', 'properties'],
+      ['🎯 Задания', 'quests'],
+      ['🏦 Банк', 'bank'],
+      ['🌐 Мультиплеер', 'servers'],
+      ['⚙️ Настройки', 'settings']
+    ];
+    nav.forEach(([label, panel]) => {
+      const btn = el('button', 'btn', label);
+      btn.onclick = () => this.open(panel);
+      b.appendChild(btn);
+    });
+
+    b.appendChild(el('div', 'sec', 'Опасная зона'));
+    const sv = el('button', 'btn good', '💾 Сохранить игру');
+    sv.onclick = () => this.game.saveGame(true);
+    b.appendChild(sv);
+    const q = el('button', 'btn danger', '🚪 Выйти в меню');
+    q.onclick = () => this.game.quitToMenu();
+    b.appendChild(q);
+  }
+
+  /* ======================= ТРАНСПОРТ ИГРОКА ======================= */
+  render_vehicles() {
+    const p = this.game.player;
+    this.title.textContent = 'Мой транспорт';
+    const b = this.body;
+    b.innerHTML = '';
+
+    const buy = el('button', 'btn primary', '🛒 Автосалон');
+    buy.onclick = () => this.open('dealership');
+    b.appendChild(buy);
+
+    if (!p.vehicles.length) {
+      b.appendChild(el('div', 'empty', 'Своего транспорта нет. Загляни в автосалон или угони… шутка.'));
+      return;
+    }
+
+    b.appendChild(el('div', 'sec', 'Гараж'));
+    p.vehicles.forEach(v => {
+      const spec = VEHICLES[v.type];
+      const row = el('div', 'row');
+      const spawned = this.game.isVehicleSpawned(v.plate);
+      row.innerHTML = `<div class="ic">🚗</div><div class="grow">
+        <div class="t">${spec.name} · ${v.plate}</div>
+        <div class="d">Топливо ${Math.round(v.fuel)} л · износ ${Math.round(v.damage * 100)}%
+        ${spawned ? ' · <span style="color:var(--good)">на улице</span>' : ' · в гараже'}</div></div>`;
+      const acts = el('div', 'btn-row');
+      const call = el('button', 'btn sm primary', spawned ? 'Найти' : 'Подать');
+      call.onclick = () => this.game.summonVehicle(v.plate);
+      acts.appendChild(call);
+      const sell = el('button', 'btn sm danger', 'Продать');
+      sell.onclick = () => this.game.sellVehicle(v.plate);
+      acts.appendChild(sell);
+      row.appendChild(acts);
+      b.appendChild(row);
+    });
+  }
+
+  /* ======================= АВТОСАЛОН ======================= */
+  render_dealership() {
+    const p = this.game.player;
+    this.title.textContent = 'Автосалон';
+    const b = this.body;
+    b.innerHTML = '';
+    b.appendChild(el('div', 'sec', `Наличные: ${fmtMoney(p.money)}`));
+
+    DEALERSHIP.forEach(type => {
+      const spec = VEHICLES[type];
+      const row = el('div', 'row');
+      const afford = p.money >= spec.price;
+      if (!afford) row.classList.add('locked');
+      row.innerHTML = `<div class="ic">🚘</div><div class="grow">
+        <div class="t">${spec.name}</div>
+        <div class="d">Макс. ${Math.round(spec.maxSpeed * 3.6)} км/ч · разгон ${spec.accel} · мест ${spec.seats} · багажник ${spec.trunk} кг</div>
+        </div><div class="price">${spec.price} $</div>`;
+      const go = el('button', 'btn sm primary', 'Купить');
+      go.disabled = !afford;
+      go.onclick = () => this.game.buyVehicle(type);
+      row.appendChild(go);
+      b.appendChild(row);
+    });
+  }
+
+  /* ======================= НЕДВИЖИМОСТЬ ======================= */
+  render_properties() {
+    const p = this.game.player;
+    this.title.textContent = 'Недвижимость';
+    const b = this.body;
+    b.innerHTML = '';
+
+    if (!p.properties.length) {
+      b.appendChild(el('div', 'empty', 'Жилья нет. Подойди к дому с табличкой «Продаётся» и нажми взаимодействие.'));
+    } else {
+      p.properties.forEach(h => {
+        const row = el('div', 'row');
+        row.innerHTML = `<div class="ic">🏠</div><div class="grow">
+          <div class="t">${h.name}</div><div class="d">Куплен за ${fmtMoney(h.price)}</div></div>`;
+        const go = el('button', 'btn sm', 'На карту');
+        go.onclick = () => { this.close(); this.game.setWaypoint(h.x, h.z, h.name); };
+        row.appendChild(go);
+        b.appendChild(row);
+      });
+    }
+
+    b.appendChild(el('div', 'sec', 'Дома в продаже рядом'));
+    const near = this.game.city.pois
+      .filter(x => x.type === 'house' && !S.ownsProperty(p, x.id))
+      .map(x => ({ x, d: dist2D(x.x, x.z, this.game.player3d.pos.x, this.game.player3d.pos.z) }))
+      .sort((a, b2) => a.d - b2.d).slice(0, 8);
+
+    near.forEach(({ x: h, d }) => {
+      const row = el('div', 'row');
+      const afford = p.money >= h.price;
+      if (!afford) row.classList.add('locked');
+      row.innerHTML = `<div class="ic">🏡</div><div class="grow">
+        <div class="t">${h.name}</div><div class="d">${Math.round(d)} м отсюда · с гаражом</div></div>
+        <div class="price">${h.price} $</div>`;
+      const go = el('button', 'btn sm', 'Маршрут');
+      go.onclick = () => { this.close(); this.game.setWaypoint(h.x, h.z, h.name); };
+      row.appendChild(go);
+      b.appendChild(row);
+    });
+  }
+
+  /* ======================= ЗАДАНИЯ ======================= */
+  render_quests() {
+    const p = this.game.player;
+    this.title.textContent = 'Задания';
+    const b = this.body;
+    b.innerHTML = '';
+
+    QUESTS.forEach(q => {
+      const st = S.questState(p, q.id);
+      const row = el('div', 'row' + (st.done ? '' : ' active'));
+      const stepsHtml = q.steps.map((s, i) => {
+        const mark = st.done || i < st.step ? '✅' : (i === st.step ? '▶️' : '⬜');
+        return `${mark} ${s.text}`;
+      }).join('<br>');
+      row.innerHTML = `<div class="ic">${st.done ? '🏆' : '🎯'}</div><div class="grow">
+        <div class="t">${q.name}</div>
+        <div class="d">${q.desc}</div>
+        <div class="d" style="margin-top:5px">${stepsHtml}</div>
+        <div class="d" style="margin-top:4px;color:var(--gold)">Награда: ${q.reward.money} $ · ${q.reward.xp} XP${q.reward.license ? ' · права' : ''}</div>
+        </div>`;
+      b.appendChild(row);
+    });
+  }
+
+  /* ======================= БАНК ======================= */
+  render_bank() {
+    const p = this.game.player;
+    this.title.textContent = 'Банк';
+    const b = this.body;
+    b.innerHTML = '';
+    b.innerHTML = `<div class="kv"><span>Наличные</span><b>${fmtMoney(p.money)}</b></div>
+      <div class="kv"><span>На счету</span><b>${fmtMoney(p.bank)}</b></div>`;
+
+    [100, 500, 1000, 5000].forEach(amt => {
+      const r = el('div', 'btn-row');
+      const d = el('button', 'btn sm', `Положить ${amt}`);
+      d.disabled = p.money < amt;
+      d.onclick = () => { S.deposit(p, amt); this.game.hud.toast(`Внесено ${amt} $`, 'good'); this.refresh(); };
+      const w = el('button', 'btn sm', `Снять ${amt}`);
+      w.disabled = p.bank < amt;
+      w.onclick = () => { S.withdraw(p, amt); this.game.hud.toast(`Снято ${amt} $`, 'good'); this.refresh(); };
+      r.appendChild(d); r.appendChild(w);
+      b.appendChild(r);
+    });
+
+    const all = el('button', 'btn', 'Положить всё');
+    all.onclick = () => { S.deposit(p, p.money); this.refresh(); };
+    b.appendChild(all);
+  }
+
+  /* ======================= НАСТРОЙКИ ======================= */
+  render_settings() {
+    this.title.textContent = 'Настройки';
+    const b = this.body;
+    b.innerHTML = '';
+
+    b.appendChild(el('div', 'sec', 'Качество графики'));
+    const seg = el('div', 'seg');
+    ['LOW', 'MEDIUM', 'HIGH'].forEach(q => {
+      const btn = el('button', 'seg-btn' + (this.game.engine.qualityName === q ? ' active' : ''),
+        { LOW: 'Низкое', MEDIUM: 'Среднее', HIGH: 'Высокое' }[q]);
+      btn.onclick = () => { this.game.setQuality(q); this.refresh(); };
+      seg.appendChild(btn);
+    });
+    b.appendChild(seg);
+    b.appendChild(el('div', 'd', '<div class="d" style="margin-top:6px">Низкое — без теней, короткая прорисовка. Для слабых телефонов.</div>'));
+
+    b.appendChild(el('div', 'sec', 'Вид'));
+    const camSeg = el('div', 'seg');
+    [['Третье лицо', false], ['Первое лицо', true]].forEach(([label, fp]) => {
+      const btn = el('button', 'seg-btn' + (this.game.player3d.firstPerson === fp ? ' active' : ''), label);
+      btn.onclick = () => { this.game.player3d.firstPerson = fp; this.refresh(); };
+      camSeg.appendChild(btn);
+    });
+    b.appendChild(camSeg);
+
+    b.appendChild(el('div', 'sec', 'Время суток'));
+    const t = el('div', 'btn-row');
+    [['Утро', 8], ['День', 13], ['Закат', 19], ['Ночь', 1]].forEach(([label, h]) => {
+      const btn = el('button', 'btn sm', label);
+      btn.onclick = () => { this.game.engine.time = h; this.refresh(); };
+      t.appendChild(btn);
+    });
+    b.appendChild(t);
+
+    b.appendChild(el('div', 'sec', 'Данные'));
+    const wipe = el('button', 'btn danger', 'Удалить сохранение');
+    wipe.onclick = () => this.game.confirmWipe();
+    b.appendChild(wipe);
+  }
+
+  /* ======================= СЕРВЕРЫ ======================= */
+  render_servers() {
+    this.title.textContent = 'Мультиплеер';
+    const b = this.body;
+    b.innerHTML = '';
+    const net = this.game.net;
+
+    const status = el('div', 'row');
+    status.innerHTML = `<div class="ic">${net.connected ? '🟢' : '⚪'}</div><div class="grow">
+      <div class="t">${net.connected ? 'Подключён: ' + net.serverName : 'Оффлайн (одиночная игра)'}</div>
+      <div class="d">${net.connected ? net.players.size + ' игроков на сервере' : 'Город живёт локально, NPC и трафик работают'}</div></div>`;
+    b.appendChild(status);
+
+    b.appendChild(el('div', 'sec', 'Подключение к серверу'));
+    const inp = el('input');
+    inp.type = 'text';
+    inp.placeholder = 'ws://адрес:8787';
+    inp.value = net.lastUrl || localStorage.getItem('rp:lastServer') || '';
+    inp.style.cssText = 'width:100%;background:rgba(255,255,255,.06);border:1px solid var(--line);border-radius:11px;padding:12px;color:var(--text);outline:none;user-select:text;margin-bottom:8px';
+    b.appendChild(inp);
+
+    const row = el('div', 'btn-row');
+    const conn = el('button', 'btn sm primary', 'Подключиться');
+    conn.onclick = () => {
+      const url = inp.value.trim();
+      if (!url) { this.game.hud.toast('Введи адрес сервера', 'bad'); return; }
+      localStorage.setItem('rp:lastServer', url);
+      this.game.connectServer(url);
+      setTimeout(() => this.refresh(), 900);
+    };
+    const disc = el('button', 'btn sm danger', 'Отключиться');
+    disc.disabled = !net.connected;
+    disc.onclick = () => { net.disconnect(); this.refresh(); };
+    row.appendChild(conn); row.appendChild(disc);
+    b.appendChild(row);
+
+    if (net.connected && net.players.size) {
+      b.appendChild(el('div', 'sec', 'Игроки онлайн'));
+      net.players.forEach(pl => {
+        const r = el('div', 'row');
+        r.innerHTML = `<div class="ic">👤</div><div class="grow"><div class="t">${pl.name}</div>
+          <div class="d">${pl.inVehicle ? 'за рулём' : 'пешком'} · ${Math.round(dist2D(pl.x, pl.z, this.game.player3d.pos.x, this.game.player3d.pos.z))} м</div></div>`;
+        b.appendChild(r);
+      });
+    }
+
+    b.appendChild(el('div', 'sec', 'Как поднять свой сервер'));
+    b.appendChild(el('div', 'd', `<div class="d" style="line-height:1.6">
+      Сервер лежит в репозитории в папке <b>server/</b>. На компьютере:<br>
+      <code style="color:var(--acc)">cd server && npm install && npm start</code><br>
+      Он поднимется на порту <b>8787</b>. Узнай локальный IP компьютера
+      (<code>ipconfig</code> / <code>ifconfig</code>) и введи сюда
+      <code style="color:var(--acc)">ws://192.168.х.х:8787</code>.<br>
+      Телефон и компьютер должны быть в одной Wi-Fi сети.
+      Мир детерминированный (один сид), поэтому город у всех одинаковый.</div>`));
+  }
+}

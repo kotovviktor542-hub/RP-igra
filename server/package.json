@@ -1,0 +1,13 @@
+{
+  "name": "city-rp-server",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Выделенный сервер для City RP",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
