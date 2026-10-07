@@ -72,10 +72,14 @@ group('Файлы проекта', () => {
   const patch = fs.readFileSync(path.join(ROOT, 'tools/patch-android.js'), 'utf8');
   ok('патч ставит ландшафтную ориентацию', /sensorLandscape/.test(patch));
 
-  const wf = fs.readFileSync(path.join(ROOT, '.github/workflows/build-apk.yml'), 'utf8');
-  ok('CI проставляет номер сборки', /tools\/stamp\.js/.test(wf));
-  ok('CI патчит Android', /tools\/patch-android\.js/.test(wf));
-  ok('CI публикует веб-версию на Pages', /deploy-pages/.test(wf));
+  const apkWf = fs.readFileSync(path.join(ROOT, '.github/workflows/build-apk.yml'), 'utf8');
+  ok('APK собирается только вручную', !/^on:[\s\S]*?push:/m.test(apkWf.split('jobs:')[0]));
+  ok('CI патчит Android при сборке APK', /tools\/patch-android\.js/.test(apkWf));
+
+  const webWf = fs.readFileSync(path.join(ROOT, '.github/workflows/deploy-web.yml'), 'utf8');
+  ok('пуш публикует обновление игры', /push:/.test(webWf) && /deploy-pages/.test(webWf));
+  ok('обновление проставляет номер сборки', /tools\/stamp\.js/.test(webWf));
+  ok('номер новой сборки больше установленного APK', /100 \+/.test(webWf));
 
   // все import внутри www резолвятся
   const files = [];

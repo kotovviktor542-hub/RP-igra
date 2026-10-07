@@ -1,0 +1,58 @@
+name: Deploy Web (обновление игры)
+
+# Каждый пуш в main публикует новую версию игры на GitHub Pages.
+# Установленный APK видит её и предлагает кнопку «Обновить» — переустановка не нужна.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: deploy-web
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Логические тесты
+        run: node tools/check.js
+
+      - name: Номер сборки
+        # смещение 100: APK, который уже установлен, собран как build 6 —
+        # новые веб-сборки обязаны быть больше, иначе обновление не предложится
+        run: BUILD_NUMBER=$(( 100 + ${{ github.run_number }} )) node tools/stamp.js
+
+      - name: Сборка веб-бандла
+        run: |
+          mkdir -p site
+          cp -r www/* site/
+          cp www/index.html site/404.html
+          cat site/version.json
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
