@@ -42,22 +42,23 @@ const adaptive = (name) => `<?xml version="1.0" encoding="utf-8"?>
 fs.writeFileSync(path.join(res, 'mipmap-anydpi-v26/ic_launcher.xml'), adaptive());
 fs.writeFileSync(path.join(res, 'mipmap-anydpi-v26/ic_launcher_round.xml'), adaptive());
 
-// цвет подложки адаптивной иконки + splash
-fs.mkdirSync(path.join(res, 'values'), { recursive: true });
-const colorsPath = path.join(res, 'values/colors.xml');
-let colors = fs.existsSync(colorsPath) ? fs.readFileSync(colorsPath, 'utf8') : '';
-if (!colors.includes('ic_launcher_background')) {
-  if (colors.includes('</resources>')) {
-    colors = colors.replace('</resources>',
-      '    <color name="ic_launcher_background">#0A0A0A</color>\n</resources>');
-  } else {
-    colors = `<?xml version="1.0" encoding="utf-8"?>
+// цвет подложки адаптивной иконки — Capacitor уже создаёт values/ic_launcher_background.xml,
+// просто перекрашиваем его (дубликат ресурса ломает сборку).
+const bgPath = path.join(res, 'values/ic_launcher_background.xml');
+const bgXml = `<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="ic_launcher_background">#0A0A0A</color>
 </resources>
 `;
+fs.mkdirSync(path.join(res, 'values'), { recursive: true });
+fs.writeFileSync(bgPath, bgXml);
+const colorsPath = path.join(res, 'values/colors.xml');
+if (fs.existsSync(colorsPath)) {
+  const colors = fs.readFileSync(colorsPath, 'utf8');
+  if (colors.includes('ic_launcher_background')) {
+    fs.writeFileSync(colorsPath,
+      colors.replace(/\s*<color name="ic_launcher_background">[^<]*<\/color>/g, ''));
   }
-  fs.writeFileSync(colorsPath, colors);
 }
 
 // ── 2. Манифест: ландшафт + фуллскрин ─────────────────────────────────
