@@ -16,8 +16,9 @@ import { Controls } from './ui/controls.js';
 import { NetClient } from './net/client.js';
 import * as S from './game/state.js';
 import { ITEMS, JOBS, ECONOMY } from './game/content.js';
+import { BUILD, checkForUpdate, applyUpdate, lockLandscape, watchOrientation } from './core/updater.js';
 
-const VERSION = '0.2.0';
+const VERSION = '0.3.0';
 const WORLD_SEED = 20261007;
 const $ = id => document.getElementById(id);
 const frame = () => new Promise(r => requestAnimationFrame(() => setTimeout(r, 0)));
@@ -111,6 +112,8 @@ class Game {
       () => $('menu').classList.remove('hidden')
     );
 
+    lockLandscape();
+    watchOrientation($('rotate'));
     this._bindMenu();
     this.engine.add((dt) => this.update(dt));
     this.engine.start();
@@ -145,12 +148,41 @@ class Game {
       this.hud.show();
       this.panels.open('servers');
     });
+    $('btn-update').addEventListener('click', () => this.checkUpdate(true));
+    $('menu-version').textContent = 'v' + VERSION + (BUILD ? ' · сборка ' + BUILD : ' · dev');
+    // тихая автопроверка при запуске
+    setTimeout(() => this.checkUpdate(false), 2500);
+
     $('btn-settings').addEventListener('click', () => {
       if (!this.player) { this.hud.toast('Сначала начни игру'); return; }
       $('menu').classList.add('hidden');
       this.hud.show();
       this.panels.open('settings');
     });
+  }
+
+  /** Проверка обновления. loud=true — показывать результат всегда. */
+  async checkUpdate(loud = true) {
+    const btn = $('btn-update');
+    if (loud && btn) btn.textContent = 'Проверяю…';
+    const r = await checkForUpdate();
+    if (r.status === 'update') {
+      if (btn) {
+        btn.textContent = 'Обновить до сборки ' + r.build;
+        btn.classList.add('primary');
+        btn.onclick = () => applyUpdate(r.build);
+      }
+      this.hud?.toast?.('Доступно обновление: сборка ' + r.build, 'good');
+    } else if (r.status === 'fresh') {
+      if (btn) btn.textContent = 'У тебя последняя версия';
+      if (loud) this.hud?.toast?.('Установлена последняя версия', 'good');
+      if (btn) setTimeout(() => { btn.textContent = 'Проверить обновление'; }, 2500);
+    } else {
+      if (btn) btn.textContent = 'Нет сети';
+      if (loud) this.hud?.toast?.('Нет связи с сервером обновлений', 'bad');
+      if (btn) setTimeout(() => { btn.textContent = 'Проверить обновление'; }, 2500);
+    }
+    return r;
   }
 
   _showMenu() {

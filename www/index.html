@@ -4,200 +4,114 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
   <meta name="theme-color" content="#05070c">
-  <title>City RP</title>
-  <link rel="icon" href="data:image/png;base64,iVBORw0KGgo=">
-  <link rel="stylesheet" href="css/ui.css">
+  <title>Horizons RP</title>
+  <link rel="icon" href="img/icon-192.png">
+  <link rel="apple-touch-icon" href="img/icon-180.png">
+  <link rel="manifest" href="manifest.webmanifest">
+  <style>
+    :root { --gold:#ffb300; }
+    * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+    html,body { height:100%; margin:0; }
+    body {
+      background:#05070c; color:#e8ecf4;
+      font:16px/1.45 system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+      display:flex; align-items:center; justify-content:center; text-align:center;
+      padding:20px;
+    }
+    .box { max-width:460px; width:100%; }
+    .logo { width:132px; height:132px; border-radius:28px; margin:0 auto 14px; display:block;
+            box-shadow:0 0 42px rgba(255,179,0,.22); }
+    h1 { font:800 26px/1 system-ui,sans-serif; letter-spacing:.14em; margin:0 0 4px; }
+    h1 span { color:var(--gold); }
+    .sub { color:#8b93a7; font-size:13px; margin:0 0 22px; letter-spacing:.05em; }
+    #status { color:#9aa3b7; font-size:14px; min-height:22px; margin-bottom:16px; }
+    .btn {
+      display:block; width:100%; margin:9px 0; padding:15px 18px; border:1px solid rgba(255,255,255,.12);
+      border-radius:14px; background:rgba(255,255,255,.05); color:#e8ecf4;
+      font:600 16px system-ui,sans-serif; cursor:pointer;
+    }
+    .btn.primary { background:linear-gradient(180deg,#ffc53d,#f59e0b); color:#1a1200; border-color:#f59e0b; }
+    .btn:active { transform:scale(.985); }
+    .hidden { display:none !important; }
+    .ver { color:#5f677a; font-size:12px; margin-top:16px; }
+    .spin { display:inline-block; width:14px; height:14px; border:2px solid rgba(255,179,0,.3);
+            border-top-color:var(--gold); border-radius:50%; animation:s .8s linear infinite; vertical-align:-2px; margin-right:7px; }
+    @keyframes s { to { transform:rotate(360deg); } }
+  </style>
 </head>
 <body>
+<div class="box">
+  <img class="logo" src="img/icon-512.png" alt="Horizons RP">
+  <h1>HORIZONS<span>RP</span></h1>
+  <p class="sub">Открытый город · ролевая игра</p>
 
-<canvas id="gl"></canvas>
+  <div id="status"><span class="spin"></span>Проверяю обновления…</div>
 
-<!-- ================= ЗАГРУЗКА ================= -->
-<div id="loader" class="overlay">
-  <div class="loader-box">
-    <h1 class="brand">CITY<span>RP</span></h1>
-    <div class="bar-outer"><div id="load-bar" class="bar-inner"></div></div>
-    <p id="load-text">Инициализация…</p>
-    <p class="hint" id="load-hint"></p>
-  </div>
+  <button id="btn-update" class="btn primary hidden">Обновить</button>
+  <button id="btn-play" class="btn hidden">Играть</button>
+  <p class="ver" id="ver"></p>
 </div>
 
-<!-- ================= ГЛАВНОЕ МЕНЮ ================= -->
-<div id="menu" class="overlay hidden">
-  <div class="menu-box">
-    <h1 class="brand">CITY<span>RP</span></h1>
-    <p class="sub">Открытый город · ролевая игра</p>
-    <button id="btn-continue" class="btn primary hidden">Продолжить</button>
-    <button id="btn-new" class="btn primary">Новая игра</button>
-    <button id="btn-servers" class="btn">Серверы · мультиплеер</button>
-    <button id="btn-settings" class="btn">Настройки</button>
-    <p class="ver" id="menu-version">v0.2.0</p>
-  </div>
-</div>
+<script>
+(function () {
+  // Номер сборки подставляется в CI (tools/stamp.js). 0 = локальная разработка.
+  var LOCAL_BUILD = 0;
+  var REMOTE = 'https://kotovviktor542-hub.github.io/RP-igra/';
 
-<!-- ================= СОЗДАНИЕ ПЕРСОНАЖА ================= -->
-<div id="creator" class="overlay hidden">
-  <div class="creator-wrap">
-    <h2>Создание персонажа</h2>
-    <div class="creator-grid">
-      <div class="creator-preview"><canvas id="cc-canvas"></canvas></div>
-      <div class="creator-form">
-        <label class="field">
-          <span>Имя и фамилия</span>
-          <input id="cc-name" type="text" maxlength="24" placeholder="Иван Петров" autocomplete="off">
-        </label>
+  var $ = function (id) { return document.getElementById(id); };
+  var status = $('status'), bUpd = $('btn-update'), bPlay = $('btn-play'), ver = $('ver');
 
-        <div class="field">
-          <span>Пол</span>
-          <div class="seg" data-seg="gender">
-            <button class="seg-btn active" data-v="m">Мужской</button>
-            <button class="seg-btn" data-v="f">Женский</button>
-          </div>
-        </div>
+  // Запущено уже с веб-версии (github.io или dev-сервер) — обновлять нечего, просто играем.
+  var isRemote = location.href.indexOf(REMOTE) === 0 || /github\.io$/.test(location.hostname);
+  var pinned = localStorage.getItem('hz:useRemote') === '1';
 
-        <div class="field"><span>Тон кожи</span><div class="swatches" id="cc-skin"></div></div>
-        <div class="field"><span>Волосы</span><div class="swatches" id="cc-hair"></div></div>
-        <div class="field">
-          <span>Причёска</span>
-          <div class="seg" data-seg="hairStyle">
-            <button class="seg-btn active" data-v="0">1</button>
-            <button class="seg-btn" data-v="1">2</button>
-            <button class="seg-btn" data-v="2">3</button>
-            <button class="seg-btn" data-v="3">4</button>
-          </div>
-        </div>
-        <div class="field"><span>Верх</span><div class="swatches" id="cc-shirt"></div></div>
-        <div class="field"><span>Низ</span><div class="swatches" id="cc-pants"></div></div>
+  function go(url) { location.replace(url); }
 
-        <label class="field">
-          <span>Рост <b id="cc-h-val">178</b> см</span>
-          <input id="cc-height" type="range" min="155" max="200" value="178">
-        </label>
-        <label class="field">
-          <span>Телосложение</span>
-          <input id="cc-build" type="range" min="70" max="135" value="100">
-        </label>
-      </div>
-    </div>
-    <div class="creator-actions">
-      <button id="cc-random" class="btn">Случайно</button>
-      <button id="cc-back" class="btn">Назад</button>
-      <button id="cc-start" class="btn primary">В город</button>
-    </div>
-  </div>
-</div>
+  function play() { go(isRemote ? './game.html' : (pinned ? REMOTE + 'game.html' : './game.html')); }
 
-<!-- ================= HUD ================= -->
-<div id="hud" class="hidden">
-  <!-- верх слева: деньги, уровень -->
-  <div class="hud-top-left">
-    <div class="money-chip"><span id="hud-money">0 $</span></div>
-    <div class="sub-chip">
-      <span id="hud-bank">Банк 0 $</span>
-      <span class="dot">·</span>
-      <span id="hud-level">Ур. 1</span>
-    </div>
-  </div>
+  function fetchVersion() {
+    return new Promise(function (res, rej) {
+      var done = false;
+      var to = setTimeout(function () { if (!done) { done = true; rej(new Error('timeout')); } }, 6000);
+      fetch(REMOTE + 'version.json?t=' + Date.now(), { cache: 'no-store' })
+        .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error('http ' + r.status)); })
+        .then(function (j) { if (!done) { done = true; clearTimeout(to); res(j); } })
+        .catch(function (e) { if (!done) { done = true; clearTimeout(to); rej(e); } });
+    });
+  }
 
-  <!-- верх справа: часы, FPS -->
-  <div class="hud-top-right">
-    <div class="clock-chip"><span id="hud-clock">09:30</span></div>
-    <div class="sub-chip right"><span id="hud-fps">60 fps</span></div>
-  </div>
+  if (isRemote) { play(); return; }
 
-  <!-- полоски состояния -->
-  <div class="hud-stats" id="hud-stats"></div>
+  ver.textContent = 'Установлена сборка ' + (LOCAL_BUILD || 'dev');
+  bPlay.classList.remove('hidden');
+  bPlay.onclick = play;
 
-  <!-- миникарта -->
-  <div class="minimap-wrap">
-    <canvas id="minimap" width="200" height="200"></canvas>
-    <div class="minimap-ring"></div>
-    <div id="mm-street" class="mm-street">—</div>
-  </div>
-
-  <!-- спидометр -->
-  <div id="speedo" class="speedo hidden">
-    <canvas id="speedo-canvas" width="190" height="190"></canvas>
-    <div class="speedo-val"><span id="speed-num">0</span><small>км/ч</small></div>
-    <div class="speedo-fuel">
-      <div class="fuel-bar"><div id="fuel-fill"></div></div>
-      <span id="fuel-txt">80 л</span>
-    </div>
-  </div>
-
-  <!-- подсказка взаимодействия -->
-  <div id="prompt" class="prompt hidden"></div>
-
-  <!-- уведомления -->
-  <div id="toasts" class="toasts"></div>
-
-  <!-- трекер задания -->
-  <div id="tracker" class="tracker hidden">
-    <div class="tracker-title" id="tracker-title">Задание</div>
-    <div class="tracker-step" id="tracker-step"></div>
-    <div class="tracker-dist" id="tracker-dist"></div>
-  </div>
-
-  <!-- чат -->
-  <div id="chat" class="chat">
-    <div id="chat-log" class="chat-log"></div>
-    <div class="chat-input-row hidden" id="chat-row">
-      <input id="chat-input" type="text" maxlength="120" placeholder="Сообщение… (/me, /do, /pay)">
-      <button id="chat-send">▶</button>
-    </div>
-  </div>
-
-  <!-- сенсорное управление -->
-  <div id="touch" class="touch">
-    <div id="stick" class="stick"><div id="stick-knob" class="stick-knob"></div></div>
-    <div class="buttons">
-      <button class="rb" id="b-action">E</button>
-      <button class="rb" id="b-run">БЕГ</button>
-      <button class="rb" id="b-jump">▲</button>
-      <button class="rb small" id="b-brake">ТОРМ</button>
-      <button class="rb small" id="b-horn">СИГ</button>
-      <button class="rb small" id="b-light">СВЕТ</button>
-    </div>
-  </div>
-
-  <!-- нижняя панель -->
-  <nav class="dock">
-    <button class="dock-btn" data-panel="map">🗺<span>Карта</span></button>
-    <button class="dock-btn" data-panel="inventory">🎒<span>Вещи</span></button>
-    <button class="dock-btn" data-panel="jobs">💼<span>Работа</span></button>
-    <button class="dock-btn" data-panel="phone">📱<span>Меню</span></button>
-    <button class="dock-btn" id="dock-chat">💬<span>Чат</span></button>
-  </nav>
-</div>
-
-<!-- ================= ПАНЕЛИ ================= -->
-<div id="panel" class="panel hidden">
-  <div class="panel-head">
-    <h3 id="panel-title">Панель</h3>
-    <button id="panel-close" class="icon-btn">✕</button>
-  </div>
-  <div id="panel-body" class="panel-body"></div>
-</div>
-
-<!-- ================= ПОЛНАЯ КАРТА ================= -->
-<div id="bigmap" class="overlay hidden">
-  <div class="bigmap-head">
-    <h3>Карта города</h3>
-    <button id="bigmap-close" class="icon-btn">✕</button>
-  </div>
-  <canvas id="bigmap-canvas"></canvas>
-  <div class="bigmap-legend" id="bigmap-legend"></div>
-</div>
-
-<!-- ================= ДИАЛОГ ================= -->
-<div id="dialog" class="overlay hidden">
-  <div class="dialog-box">
-    <h3 id="dialog-title">—</h3>
-    <p id="dialog-text">—</p>
-    <div id="dialog-actions" class="dialog-actions"></div>
-  </div>
-</div>
-
-<script type="module" src="js/main.js"></script>
+  fetchVersion().then(function (j) {
+    var remoteBuild = j.build | 0;
+    ver.textContent = 'Установлена: ' + (LOCAL_BUILD || 'dev') + ' · в сети: ' + remoteBuild;
+    if (remoteBuild > LOCAL_BUILD || pinned) {
+      status.innerHTML = remoteBuild > LOCAL_BUILD
+        ? '🟡 Доступна новая версия — сборка <b>' + remoteBuild + '</b>'
+        : '🟢 У тебя последняя версия';
+      bUpd.textContent = remoteBuild > LOCAL_BUILD ? 'Обновить до сборки ' + remoteBuild : 'Обновить';
+      bUpd.classList.remove('hidden');
+      bUpd.onclick = function () {
+        localStorage.setItem('hz:useRemote', '1');
+        status.innerHTML = '<span class="spin"></span>Загружаю обновление…';
+        go(REMOTE + 'game.html?v=' + remoteBuild);
+      };
+      bPlay.textContent = 'Играть на установленной версии';
+      // если пользователь уже один раз обновлялся — уходим в онлайн-версию сразу
+      if (pinned) setTimeout(function () { go(REMOTE + 'game.html?v=' + remoteBuild); }, 600);
+    } else {
+      status.textContent = '🟢 Установлена последняя версия';
+      setTimeout(play, 500);
+    }
+  }).catch(function () {
+    status.textContent = '📴 Нет сети — играем офлайн на установленной версии';
+    setTimeout(play, 900);
+  });
+})();
+</script>
 </body>
 </html>

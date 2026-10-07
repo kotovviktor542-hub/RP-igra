@@ -31,7 +31,8 @@ const group = (n, f) => { console.log('\n\u001b[1m' + n + '\u001b[0m'); f(); };
 /* ======================= СТРУКТУРА ======================= */
 group('Файлы проекта', () => {
   const need = [
-    'index.html', 'css/ui.css',
+    'index.html', 'game.html', 'manifest.webmanifest', 'version.json', 'css/ui.css',
+    'img/icon-192.png', 'img/icon-512.png', 'js/core/updater.js',
     'vendor/three.module.js', 'vendor/BufferGeometryUtils.js',
     'js/main.js', 'js/core/engine.js', 'js/core/textures.js', 'js/core/utils.js',
     'js/world/city.js', 'js/world/buildings.js', 'js/world/props.js',
@@ -44,9 +45,37 @@ group('Файлы проекта', () => {
   ok('server/server.js', fs.existsSync(path.join(ROOT, 'server/server.js')));
   ok('capacitor.config.json', fs.existsSync(path.join(ROOT, 'capacitor.config.json')));
 
-  const html = fs.readFileSync(path.join(WWW, 'index.html'), 'utf8');
-  ok('index.html грузит main.js как модуль', /type="module"[^>]*js\/main\.js/.test(html));
+  const html = fs.readFileSync(path.join(WWW, 'game.html'), 'utf8');
+  ok('game.html грузит main.js как модуль', /type="module"[^>]*js\/main\.js/.test(html));
   ok('нет внешних CDN-ссылок', !/src="https?:\/\//.test(html));
+  ok('заголовок Horizons RP', /<title>Horizons RP<\/title>/.test(html));
+  ok('бренд в меню переименован', !/CITY<span>/.test(html) && /HORIZONS<span>/.test(html));
+  ok('есть оверлей "поверни телефон"', /id="rotate"/.test(html));
+  ok('есть кнопка обновления', /id="btn-update"/.test(html));
+
+  const loader = fs.readFileSync(path.join(WWW, 'index.html'), 'utf8');
+  ok('лаунчер знает номер сборки', /var LOCAL_BUILD = \d+;/.test(loader));
+  ok('лаунчер ведёт на онлайн-версию', /github\.io\/RP-igra\//.test(loader));
+  ok('лаунчер умеет запускать офлайн', /\.\/game\.html/.test(loader));
+
+  const manifest = JSON.parse(fs.readFileSync(path.join(WWW, 'manifest.webmanifest'), 'utf8'));
+  ok('манифест: имя Horizons RP', manifest.name === 'Horizons RP');
+  ok('манифест: ландшафтная ориентация', manifest.orientation === 'landscape');
+
+  const cap = JSON.parse(fs.readFileSync(path.join(ROOT, 'capacitor.config.json'), 'utf8'));
+  ok('Capacitor: appName Horizons RP', cap.appName === 'Horizons RP');
+  ok('Capacitor: разрешён переход на онлайн-версию',
+    (cap.server.allowNavigation || []).includes('kotovviktor542-hub.github.io'));
+
+  ok('есть ресурсы иконок для Android', fs.existsSync(path.join(ROOT, 'resources/android/mipmap-xxxhdpi/ic_launcher.png')));
+  ok('есть скрипт патча Android', fs.existsSync(path.join(ROOT, 'tools/patch-android.js')));
+  const patch = fs.readFileSync(path.join(ROOT, 'tools/patch-android.js'), 'utf8');
+  ok('патч ставит ландшафтную ориентацию', /sensorLandscape/.test(patch));
+
+  const wf = fs.readFileSync(path.join(ROOT, '.github/workflows/build-apk.yml'), 'utf8');
+  ok('CI проставляет номер сборки', /tools\/stamp\.js/.test(wf));
+  ok('CI патчит Android', /tools\/patch-android\.js/.test(wf));
+  ok('CI публикует веб-версию на Pages', /deploy-pages/.test(wf));
 
   // все import внутри www резолвятся
   const files = [];

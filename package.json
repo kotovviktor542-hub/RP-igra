@@ -1,14 +1,16 @@
 {
-  "name": "city-rp",
-  "version": "0.2.0",
+  "name": "horizons-rp",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
-  "description": "City RP — 3D-симулятор жизни в открытом городе (Three.js + Capacitor)",
+  "description": "Horizons RP — 3D RP-игра в большом открытом городе (Three.js + Capacitor)",
   "scripts": {
     "serve": "node tools/serve.js",
     "check": "node tools/check.js",
     "test": "node tools/check.js",
-    "sync": "node tools/vendor.js && npx cap sync android"
+    "sync": "node tools/vendor.js && npx cap sync android",
+    "stamp": "node tools/stamp.js",
+    "smoke": "node tools/smoke.cjs"
   },
   "dependencies": {
     "@capacitor/android": "^6.2.0",

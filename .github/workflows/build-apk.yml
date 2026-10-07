@@ -1,4 +1,4 @@
-name: Build APK
+name: Build APK & Deploy Web
 
 on:
   push:
@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
 concurrency:
   group: build-apk
@@ -50,11 +52,17 @@ jobs:
       - name: Run logic tests
         run: npm run check
 
+      - name: Stamp build number
+        run: BUILD_NUMBER=${{ github.run_number }} node tools/stamp.js
+
       - name: Add Android platform
         run: npx cap add android
 
       - name: Sync web assets
         run: npx cap sync android
+
+      - name: Patch Android (иконки Horizons RP + ландшафт)
+        run: node tools/patch-android.js
 
       - name: Build debug APK
         run: |
@@ -68,27 +76,54 @@ jobs:
           APK=$(find android/app/build/outputs/apk/debug -name "*.apk" | head -1)
           echo "Found APK: $APK"
           mkdir -p out
-          cp "$APK" "out/RP-igra-build${{ github.run_number }}.apk"
+          cp "$APK" "out/HorizonsRP-build${{ github.run_number }}.apk"
           ls -lh out/
-          echo "apk=out/RP-igra-build${{ github.run_number }}.apk" >> $GITHUB_OUTPUT
+          echo "apk=out/HorizonsRP-build${{ github.run_number }}.apk" >> $GITHUB_OUTPUT
+
+      - name: Prepare web bundle for Pages
+        run: |
+          mkdir -p site
+          cp -r www/* site/
+          cp www/index.html site/404.html
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+        continue-on-error: true
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: RP-igra-apk-build${{ github.run_number }}
+          name: HorizonsRP-apk-build${{ github.run_number }}
           path: ${{ steps.prep.outputs.apk }}
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v0.1.0-build${{ github.run_number }}
-          name: RP-igra v0.1.0 build ${{ github.run_number }}
+          name: Horizons RP · сборка ${{ github.run_number }}
           body: |
-            Автосборка из коммита ${{ github.sha }}
+            **Horizons RP** · сборка ${{ github.run_number }}
 
-            **Установка:** скачай APK ниже, разреши установку из неизвестных источников.
+            🌐 Играть сразу в браузере (ничего не качать): https://kotovviktor542-hub.github.io/RP-igra/
+            📱 APK ниже — ставится один раз, дальше игра обновляется сама кнопкой «Обновить».
 
             Коммит: ${{ github.event.head_commit.message }}
           files: ${{ steps.prep.outputs.apk }}
           draft: false
           prerelease: false
+
+  deploy-pages:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

@@ -234,3 +234,10 @@ input{font-family:inherit}
   .chat{bottom:calc(var(--sb) + 80px)}
   .prompt{bottom:calc(var(--sb) + 110px)}
 }
+
+/* ======= ГОРИЗОНТАЛЬНЫЙ РЕЖИМ ======= */
+/* Подсказка «поверни телефон» перекрывает всё, пока экран вертикальный. */
+#rotate { z-index: 9999; background: #05070c; }
+@media (orientation: portrait) and (pointer: coarse) {
+  #rotate.hidden { display: flex !important; }
+}

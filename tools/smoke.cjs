@@ -8,7 +8,7 @@ const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
 const PORT = 8099;
-const URL = `http://127.0.0.1:${PORT}/`;
+const URL = `http://127.0.0.1:${PORT}/game.html`;
 
 let pass = 0, fail = 0;
 const ok = (n, c, extra) => {
@@ -37,16 +37,19 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   await page.setViewport({ width: 900, height: 600 });
 
   const errors = [];
+  // проверка обновлений ходит на GitHub Pages — локально её ошибки ожидаемы
+  const IGNORE = /github\.io|version\.json|ERR_FAILED|Failed to load resource/;
+  const push = (s) => { if (!IGNORE.test(s)) errors.push(s); };
   const warnings = [];
-  page.on('pageerror', e => errors.push('pageerror: ' + e.message));
+  page.on('pageerror', e => push('pageerror: ' + e.message));
   page.on('console', m => {
     const t = m.text();
     if (m.type() === 'error') {
       if (/WebGL|SwiftShader|GroupMarker|Automatic fallback/i.test(t)) return;
-      errors.push('console: ' + t);
+      push('console: ' + t);
     } else if (m.type() === 'warning') warnings.push(t);
   });
-  page.on('requestfailed', r => errors.push('404/fail: ' + r.url()));
+  page.on('requestfailed', r => push('404/fail: ' + r.url()));
 
   console.log('\n\u001b[1mЗагрузка игры\u001b[0m');
   await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 60000 });

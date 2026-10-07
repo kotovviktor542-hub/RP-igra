@@ -1,11 +1,15 @@
 {
   "appId": "com.kotovviktor.rpigra",
-  "appName": "RP-igra",
+  "appName": "Horizons RP",
   "webDir": "www",
   "android": {
-    "allowMixedContent": true
+    "allowMixedContent": true,
+    "backgroundColor": "#05070c"
   },
   "server": {
-    "androidScheme": "https"
+    "androidScheme": "https",
+    "allowNavigation": [
+      "kotovviktor542-hub.github.io"
+    ]
   }
 }

@@ -1,0 +1,15 @@
+{
+  "name": "Horizons RP",
+  "short_name": "Horizons RP",
+  "description": "3D RP-игра в открытом городе",
+  "start_url": "./game.html",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#05070c",
+  "theme_color": "#05070c",
+  "icons": [
+    { "src": "img/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "img/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
