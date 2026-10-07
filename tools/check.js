@@ -39,7 +39,9 @@ group('Файлы проекта', () => {
     'js/entities/player.js', 'js/entities/vehicle.js', 'js/entities/humanoid.js', 'js/entities/ai.js',
     'js/game/content.js', 'js/game/state.js',
     'js/ui/hud.js', 'js/ui/panels.js', 'js/ui/chat.js', 'js/ui/map.js', 'js/ui/creator.js', 'js/ui/controls.js',
-    'js/net/client.js'
+    'js/net/client.js', 'js/ui/radial.js', 'js/entities/character.js',
+    'models/player.glb', 'models/player_f.glb',
+    'vendor/GLTFLoader.js', 'vendor/SkeletonUtils.js'
   ];
   need.forEach(f => ok(f, fs.existsSync(path.join(WWW, f))));
   ok('server/server.js', fs.existsSync(path.join(ROOT, 'server/server.js')));
@@ -52,6 +54,28 @@ group('Файлы проекта', () => {
   ok('бренд в меню переименован', !/CITY<span>/.test(html) && /HORIZONS<span>/.test(html));
   ok('есть оверлей "поверни телефон"', /id="rotate"/.test(html));
   ok('есть кнопка обновления', /id="btn-update"/.test(html));
+  ok('есть радиальное меню', /id="radial"/.test(html) && /id="radial-items"/.test(html));
+
+  const css = fs.readFileSync(path.join(WWW, 'css/ui.css'), 'utf8');
+  ok('радиальное меню слева по центру', /\.radial\s*{[^}]*top:\s*50%/.test(css) && /\.radial\s*{[^}]*left:/.test(css));
+
+  const player = fs.readFileSync(path.join(WWW, 'js/entities/player.js'), 'utf8');
+  ok('ось X джойстика не инвертирована', /Math\.atan2\(-mx, my\)/.test(player));
+  ok('игрок умеет подгружать скелетную модель', /upgradeModel/.test(player));
+
+  const props = fs.readFileSync(path.join(WWW, 'js/world/props.js'), 'utf8');
+  ok('реквизит инстансируется по ячейкам', /cellSize/.test(props) && /updateCulling/.test(props));
+  ok('есть уровни детализации реквизита', /setDetail/.test(props));
+
+  const hum = fs.readFileSync(path.join(WWW, 'js/entities/humanoid.js'), 'utf8');
+  ok('NPC склеиваются в несколько мешей', /mergeJointMeshes/.test(hum));
+
+  const eng = fs.readFileSync(path.join(WWW, 'js/core/engine.js'), 'utf8');
+  ok('адаптивное разрешение', /_autoScale/.test(eng) && /renderScale/.test(eng));
+  ok('авто-качество по устройству', /defaultQuality/.test(eng) && /isMobileDevice/.test(eng));
+
+  const cityJs = fs.readFileSync(path.join(WWW, 'js/world/city.js'), 'utf8');
+  ok('коллайдеры в пространственной сетке', /SpatialGrid/.test(cityJs));
 
   const loader = fs.readFileSync(path.join(WWW, 'index.html'), 'utf8');
   ok('лаунчер знает номер сборки', /var LOCAL_BUILD = \d+;/.test(loader));

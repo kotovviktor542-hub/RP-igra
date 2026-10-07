@@ -241,3 +241,68 @@ input{font-family:inherit}
 @media (orientation: portrait) and (pointer: coarse) {
   #rotate.hidden { display: flex !important; }
 }
+
+/* ======= РАДИАЛЬНОЕ МЕНЮ (слева по центру) ======= */
+.radial {
+  position: fixed;
+  left: max(14px, env(safe-area-inset-left));
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 60;
+  pointer-events: none;
+}
+.radial.hidden { display: none; }
+
+.radial-core {
+  pointer-events: auto;
+  width: 58px; height: 58px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 179, 0, .45);
+  background: radial-gradient(circle at 35% 30%, rgba(255, 196, 61, .32), rgba(10, 12, 18, .85));
+  color: #ffd166;
+  font-size: 24px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, .45), 0 0 18px rgba(255, 179, 0, .18);
+  backdrop-filter: blur(6px);
+  transition: transform .18s ease, box-shadow .18s ease;
+}
+.radial.open .radial-core { transform: rotate(90deg) scale(1.04); }
+
+.radial-items {
+  position: absolute;
+  left: 29px; top: 50%;
+  width: 0; height: 0;
+}
+.radial-item {
+  pointer-events: none;
+  position: absolute;
+  left: 0; top: 0;
+  width: 56px; height: 56px;
+  margin: -28px 0 0 -28px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, .12);
+  background: rgba(14, 17, 25, .86);
+  color: #e8ecf4;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 1px;
+  opacity: 0;
+  transform: translate(0, 0) scale(.4);
+  transition: transform .22s cubic-bezier(.2, .9, .3, 1.3), opacity .18s ease;
+  backdrop-filter: blur(4px);
+}
+.radial-item .ri-ic { font-size: 19px; line-height: 1; }
+.radial-item .ri-lb { font-size: 8.5px; letter-spacing: .02em; color: #9aa3b7; }
+.radial.open .radial-item {
+  pointer-events: auto;
+  opacity: 1;
+  transform: translate(var(--dx), var(--dy)) scale(1);
+}
+.radial-item:active { background: rgba(255, 179, 0, .22); border-color: rgba(255, 179, 0, .5); }
+
+/* на узких экранах кольцо чуть меньше */
+@media (max-height: 420px) {
+  .radial-core { width: 48px; height: 48px; font-size: 20px; }
+  .radial-item { width: 46px; height: 46px; margin: -23px 0 0 -23px; }
+  .radial-item .ri-ic { font-size: 16px; }
+  .radial-item .ri-lb { font-size: 7.5px; }
+}

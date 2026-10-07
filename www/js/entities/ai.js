@@ -3,7 +3,7 @@
 
 import * as THREE from '../../vendor/three.module.js';
 import { Vehicle, VEHICLES, CAR_COLORS } from './vehicle.js';
-import { Humanoid } from './humanoid.js';
+import { Humanoid, mergeJointMeshes } from './humanoid.js';
 import { makeRNG, clamp, angleDiff, dist2D } from '../core/utils.js';
 import { GRID, CELL, ROAD, roadX } from '../world/city.js';
 
@@ -31,7 +31,10 @@ export class Traffic {
     return 'sedan';
   }
 
-  setMax(n) { this.max = n; }
+  setMax(n) {
+    this.max = n;
+    while (this.cars.length > n) this._despawn(this.cars.length - 1);
+  }
 
   _spawn(px, pz) {
     // выбираем узел на кольце 90-180 м от игрока
@@ -196,7 +199,10 @@ export class Pedestrians {
     this.rng = makeRNG(31337);
   }
 
-  setMax(n) { this.max = n; }
+  setMax(n) {
+    this.max = n;
+    while (this.list.length > n) this._despawn(this.list.length - 1);
+  }
 
   _spawn(px, pz) {
     const paths = this.city.pedPaths;
@@ -211,6 +217,7 @@ export class Pedestrians {
 
     const look = Humanoid.randomLook(this.rng);
     const h = new Humanoid(look);
+    mergeJointMeshes(h.root);   // NPC рисуется в несколько раз дешевле
     const idx = this.rng.int(0, path.length - 1);
     h.root.position.set(path[idx][0], 0, path[idx][1]);
     this.scene.add(h.root);

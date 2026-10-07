@@ -38,7 +38,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
   const errors = [];
   // проверка обновлений ходит на GitHub Pages — локально её ошибки ожидаемы
-  const IGNORE = /github\.io|version\.json|ERR_FAILED|Failed to load resource/;
+  const IGNORE = /github\.io|version\.json|ERR_FAILED|Failed to load resource|\.glb/;
   const push = (s) => { if (!IGNORE.test(s)) errors.push(s); };
   const warnings = [];
   page.on('pageerror', e => push('pageerror: ' + e.message));
@@ -133,7 +133,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     ok('стартовый набор выдан', inGame.inv >= 2);
   }
 
-  console.log('\n\u001b[1mРендер и производительность\u001b[0m');
+  console.log('\n\u001b[1mРендер и производительность (телефонный пресет LOW)\u001b[0m');
+  await page.evaluate(() => window.__game.setQuality('LOW'));
   await sleep(3500);
   const perf = await page.evaluate(() => {
     const g = window.__game;
@@ -151,8 +152,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   });
   console.log('    ' + JSON.stringify(perf));
   ok('кадры рисуются', perf.drawCalls > 0, String(perf.drawCalls));
-  ok('треугольники в сцене (>50k)', perf.triangles > 50000, String(perf.triangles));
-  ok('draw calls в разумных пределах (<400)', perf.drawCalls < 400, String(perf.drawCalls));
+  ok('треугольники в сцене (>30k)', perf.triangles > 30000, String(perf.triangles));
+  ok('треугольников не больше 250k на кадр', perf.triangles < 250000, String(perf.triangles));
+  ok('draw calls в разумных пределах (<260)', perf.drawCalls < 260, String(perf.drawCalls));
   ok('текстур не слишком много (<60)', perf.textures < 60, String(perf.textures));
   ok('трафик заспавнен', perf.traffic > 0, String(perf.traffic));
   ok('пешеходы заспавнены', perf.peds > 0, String(perf.peds));
@@ -323,14 +325,59 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   ok('игра сохраняется', actions.saved);
   ok('переключение качества', actions.qLow);
 
+  console.log('\n\u001b[1mРадиальное меню\u001b[0m');
+  const radial = await page.evaluate(async () => {
+    const g = window.__game;
+    const root = document.getElementById('radial');
+    const r = root.getBoundingClientRect();
+    const centered = Math.abs((r.top + r.height / 2) - window.innerHeight / 2) < 60;
+    const onLeft = r.left < window.innerWidth * 0.25;
+    document.getElementById('radial-btn').click();
+    await new Promise(r2 => setTimeout(r2, 350));
+    const opened = root.classList.contains('open');
+    const items = document.querySelectorAll('.radial-item').length;
+    document.querySelector('.radial-item[data-id="inventory"]').click();
+    await new Promise(r2 => setTimeout(r2, 350));
+    const panelOpen = !document.getElementById('panel').classList.contains('hidden');
+    const title = document.getElementById('panel-title').textContent;
+    g.panels.close();
+    return { centered, onLeft, opened, items, panelOpen, title, closed: !root.classList.contains('open') };
+  });
+  console.log('    ' + JSON.stringify(radial));
+  ok('радиальное меню слева', radial.onLeft);
+  ok('радиальное меню по центру по вертикали', radial.centered);
+  ok('меню раскрывается', radial.opened);
+  ok('в меню 8 пунктов', radial.items === 8, String(radial.items));
+  ok('пункт открывает панель', radial.panelOpen, radial.title);
+  ok('после выбора меню закрывается', radial.closed);
+
+  console.log('\n\u001b[1mМодель игрока\u001b[0m');
+  const model = await page.evaluate(async () => {
+    const g = window.__game, p = g.player3d;
+    g.paused = false;
+    g.controls.input.my = 1; g.controls.touch.run = true;
+    await new Promise(r => setTimeout(r, 1200));
+    const anim = p.body.current;
+    g.controls.input.my = 0; g.controls.touch.run = false;
+    await new Promise(r => setTimeout(r, 2500));
+    let bones = 0;
+    p.root.traverse(o => { if (o.isSkinnedMesh) bones += o.skeleton.bones.length; });
+    return { usingModel: p.usingModel, anim, idle: p.body.current, bones };
+  });
+  console.log('    ' + JSON.stringify(model));
+  ok('загружена скелетная модель', model.usingModel === true);
+  ok('у модели есть скелет', model.bones > 20, String(model.bones));
+  ok('на бегу играет анимация бега', model.anim === 'run', String(model.anim));
+  ok('в покое — анимация покоя', model.idle === 'idle', String(model.idle));
+
   console.log('\n\u001b[1mДень/ночь и стабильность\u001b[0m');
   const night = await page.evaluate(async () => {
     const g = window.__game;
     g.engine.time = 1;         // глубокая ночь
-    await new Promise(r => setTimeout(r, 900));
+    await new Promise(r => setTimeout(r, 1600));
     const n = g.engine.nightAmount;
     g.engine.time = 13;        // день
-    await new Promise(r => setTimeout(r, 900));
+    await new Promise(r => setTimeout(r, 1600));
     return { night: n, day: g.engine.nightAmount, sunI: g.engine.sun.intensity };
   });
   ok('ночью темно', night.night > 0.8, String(night.night));

@@ -3,6 +3,7 @@
 
 import * as THREE from '../../vendor/three.module.js';
 import { Humanoid } from './humanoid.js';
+import { makeCharacter } from './character.js';
 import { clamp, damp, resolveCircleBoxes, dist2D } from '../core/utils.js';
 
 const WALK = 2.6;
@@ -38,9 +39,33 @@ export class Player {
     this.distWalked = 0;
     this.distDriven = 0;
     this.firstPerson = false;
+    this.usingModel = false;
+  }
+
+  /**
+   * Заменяет процедурного человечка качественной скелетной моделью (glTF).
+   * Тихо ничего не делает, если модель не загрузилась.
+   */
+  async upgradeModel(look = {}) {
+    const ch = await makeCharacter(look.gender === 'f' ? 'f' : 'm', look);
+    if (!ch) return false;
+    const pos = this.root.position.clone();
+    const rot = this.root.rotation.y;
+    const vis = this.root.visible;
+    this.scene.remove(this.root);
+    this.body.dispose && this.body.dispose();
+    this.body = ch;
+    this.root = ch.root;
+    this.root.position.copy(pos);
+    this.root.rotation.y = rot;
+    this.root.visible = vis;
+    this.scene.add(this.root);
+    this.usingModel = true;
+    return true;
   }
 
   setLook(look) {
+    if (this.usingModel && this.body.setTint) { this.body.setTint(look); return; }
     const pos = this.root.position.clone();
     const rot = this.root.rotation.y;
     this.scene.remove(this.root);
@@ -116,7 +141,8 @@ export class Player {
     let wantSpeed = 0;
     if (mag > 0.08) {
       // направление относительно камеры
-      const ang = Math.atan2(mx, my) + this.camYaw;
+      // экранное «вправо» в three.js = (-Fz, Fx), поэтому по X знак обратный
+      const ang = Math.atan2(-mx, my) + this.camYaw;
       const target = input.run ? RUN : WALK;
       wantSpeed = target * mag;
       this.heading = this._turnTo(this.heading, ang, dt * 11);

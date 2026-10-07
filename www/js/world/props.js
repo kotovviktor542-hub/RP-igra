@@ -326,12 +326,59 @@ const DEFS = {
 
 /* ---------- система инстансов ---------- */
 
+/** Общий материал для слитого реквизита: цвет берётся из вершин. */
+function vcMat() {
+  return mat('propsVC', { vertexColors: true, roughness: 0.82, metalness: 0.08 });
+}
+
+/**
+ * Склеивает части реквизита в одну геометрию (цвет материала запекается в вершины),
+ * чтобы на каждый куст/фонарь уходил один draw call вместо трёх.
+ * Текстурированные и светящиеся части остаются отдельными.
+ */
+function mergeParts(parts) {
+  const solid = [], keep = [];
+  for (const p of parts) {
+    if (p.glow || (p.mat && p.mat.map)) keep.push(p);
+    else solid.push(p);
+  }
+  if (solid.length < 2) return keep.concat(solid);
+
+  const geos = [];
+  for (const p of solid) {
+    let g = p.geo.clone();
+    if (g.index) g = g.toNonIndexed();          // смешивать индексированные и нет нельзя
+    const n = g.attributes.position.count;
+    if (!g.attributes.normal) g.computeVertexNormals();
+    if (!g.attributes.uv) g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(n * 2), 2));
+    const c = p.mat && p.mat.color ? p.mat.color : new THREE.Color(0xffffff);
+    const col = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) { col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b; }
+    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    for (const name of Object.keys(g.attributes)) {
+      if (!['position', 'normal', 'uv', 'color'].includes(name)) g.deleteAttribute(name);
+    }
+    geos.push(g);
+  }
+  const merged = mergeGeometries(geos, false);
+  if (!merged) return keep.concat(solid);
+  return keep.concat([{ geo: merged, mat: vcMat() }]);
+}
+
 export class PropSystem {
-  constructor(scene) {
+  /**
+   * Реквизит инстансируется ПО ЯЧЕЙКАМ (CELL_SIZE метров), а не на весь город.
+   * Благодаря этому работает и фрустум-куллинг, и отсечение по дистанции:
+   * раньше одна InstancedMesh на весь город рисовала ~700k треугольников каждый кадр.
+   */
+  constructor(scene, cellSize = 92) {
     this.scene = scene;
-    this.pending = new Map();   // type -> [Matrix4]
+    this.cellSize = cellSize;
+    this.pending = new Map();   // "type|cx,cz" -> [Matrix4]
     this.meshes = [];
+    this.cells = new Map();     // "cx,cz" -> {x, z, meshes:[]}
     this.glowMats = new Set();
+    this.skip = new Set();      // типы, скрытые ради производительности
   }
 
   add(type, x, z, rotY = 0, scale = 1, y = 0) {
@@ -342,20 +389,35 @@ export class PropSystem {
       new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rotY),
       new THREE.Vector3(scale, scale, scale)
     );
-    if (!this.pending.has(type)) this.pending.set(type, []);
-    this.pending.get(type).push(m);
+    const cx = Math.floor(x / this.cellSize);
+    const cz = Math.floor(z / this.cellSize);
+    const key = `${type}|${cx},${cz}`;
+    if (!this.pending.has(key)) this.pending.set(key, []);
+    this.pending.get(key).push(m);
   }
 
   build() {
-    this.pending.forEach((matrices, type) => {
-      // для деревьев важна вариативность — строим несколько вариантов
-      const variants = (type === 'tree' || type === 'pine' || type === 'container') ? 3 : 1;
+    this.pending.forEach((matrices, key) => {
+      const [type, cell] = key.split('|');
+      const [cx, cz] = cell.split(',').map(Number);
+      const cellKey = `${cx},${cz}`;
+      if (!this.cells.has(cellKey)) {
+        this.cells.set(cellKey, {
+          x: (cx + 0.5) * this.cellSize,
+          z: (cz + 0.5) * this.cellSize,
+          meshes: []
+        });
+      }
+      const cellRec = this.cells.get(cellKey);
+
+      // для деревьев важна вариативность — несколько вариантов геометрии
+      const variants = (type === 'tree' || type === 'pine') ? 2 : 1;
       const buckets = Array.from({ length: variants }, () => []);
       matrices.forEach((m, i) => buckets[i % variants].push(m));
 
       buckets.forEach(bucket => {
         if (!bucket.length) return;
-        const parts = DEFS[type]();
+        const parts = mergeParts(DEFS[type]());
         parts.forEach(part => {
           const inst = new THREE.InstancedMesh(part.geo, part.mat, bucket.length);
           bucket.forEach((m, i) => inst.setMatrixAt(i, m));
@@ -364,15 +426,39 @@ export class PropSystem {
           inst.receiveShadow = !part.glow;
           inst.frustumCulled = true;
           inst.userData.propType = type;
-          // приблизительная сфера, чтобы культинг не срезал высокие объекты
           inst.computeBoundingSphere();
           this.scene.add(inst);
           this.meshes.push(inst);
+          cellRec.meshes.push(inst);
           if (part.glow) this.glowMats.add(part.mat);
         });
       });
     });
     this.pending.clear();
+  }
+
+  /**
+   * Уровень детализации: 0 — только крупное (деревья, фонари, светофоры),
+   * 1 — плюс лавки/урны/заборы, 2 — всё.
+   */
+  setDetail(level) {
+    const off0 = ['bin', 'hydrant', 'bench', 'fence', 'bollard', 'planter', 'sign'];
+    const off1 = ['bin', 'hydrant'];
+    this.skip = new Set(level <= 0 ? off0 : level === 1 ? off1 : []);
+  }
+
+  /** Показывает только реквизит вокруг игрока. Вызывать каждый кадр. */
+  updateCulling(x, z, radius) {
+    const r2 = radius * radius;
+    this.cells.forEach(cell => {
+      const dx = cell.x - x, dz = cell.z - z;
+      const on = (dx * dx + dz * dz) < r2;
+      const list = cell.meshes;
+      for (let i = 0; i < list.length; i++) {
+        const m = list[i];
+        m.visible = on && !this.skip.has(m.userData.propType);
+      }
+    });
   }
 
   /** Включает/гасит фонари и подсветку по времени суток. */
@@ -385,7 +471,6 @@ export class PropSystem {
   dispose() {
     this.meshes.forEach(m => { this.scene.remove(m); m.geometry.dispose(); });
     this.meshes.length = 0;
+    this.cells.clear();
   }
 }
-
-export { DEFS as PROP_DEFS };

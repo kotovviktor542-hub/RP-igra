@@ -1,7 +1,7 @@
 /* main.js — сборка игры: загрузка мира, меню, игровой цикл, взаимодействия. */
 
 import * as THREE from '../vendor/three.module.js';
-import { Engine } from './core/engine.js';
+import { Engine, defaultQuality } from './core/engine.js';
 import { makeRNG, dist2D, fmtMoney, clamp } from './core/utils.js';
 import { City, GRID, CELL, roadX, OFFSET } from './world/city.js';
 import { Player } from './entities/player.js';
@@ -13,6 +13,8 @@ import { Chat } from './ui/chat.js';
 import { BigMap } from './ui/map.js';
 import { Creator } from './ui/creator.js';
 import { Controls } from './ui/controls.js';
+import { RadialMenu } from './ui/radial.js';
+import { preloadCharacters } from './entities/character.js';
 import { NetClient } from './net/client.js';
 import * as S from './game/state.js';
 import { ITEMS, JOBS, ECONOMY } from './game/content.js';
@@ -60,11 +62,13 @@ class Game {
     };
 
     await step(6, 'Запуск рендерера…');
-    const qual = localStorage.getItem('rp:quality') ||
-      (navigator.hardwareConcurrency >= 8 ? 'HIGH' : navigator.hardwareConcurrency >= 4 ? 'MEDIUM' : 'LOW');
+    const qual = defaultQuality();
     this.engine = new Engine($('gl'), qual);
     this.scene = this.engine.scene;
     this.camera = this.engine.camera;
+
+    await step(12, 'Загрузка моделей персонажа…');
+    await preloadCharacters().catch(() => 0);
 
     await step(16, 'Генерация текстур…');
     await frame();
@@ -86,6 +90,7 @@ class Game {
 
     await step(78, 'Деревья, фонари, мелочь…');
     this.city.props.build();
+    this.city.props.setDetail(this.engine.quality.props);
     await frame();
 
     await step(88, 'Оптимизация геометрии…');
@@ -103,6 +108,7 @@ class Game {
     this.bigmap = new BigMap(this);
     this.net = new NetClient(this);
     this.controls = new Controls(this);
+    this.radial = new RadialMenu(this);
 
     this.traffic = new Traffic(this.scene, this.city, this.engine.quality.traffic);
     this.peds = new Pedestrians(this.scene, this.city, this.engine.quality.npc);
@@ -226,6 +232,10 @@ class Game {
       this.player3d = new Player(this.scene, this.camera, this.player.look);
     } else {
       this.player3d.setLook(this.player.look);
+    }
+    // качественная скелетная модель подгружается фоном и подменяет заглушку
+    if (!this.player3d.usingModel) {
+      this.player3d.upgradeModel(this.player.look).catch(() => {});
     }
     const p = this.player.pos || this._spawnPoint();
     this.player3d.teleport(p.x, p.z, p.rot || 0);
@@ -755,6 +765,7 @@ class Game {
     localStorage.setItem('rp:quality', name);
     this.traffic.setMax(this.engine.quality.traffic);
     this.peds.setMax(this.engine.quality.npc);
+    this.city.props.setDetail(this.engine.quality.props);
     this.hud.toast('Качество: ' + name);
   }
 

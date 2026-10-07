@@ -4,7 +4,7 @@
 import * as THREE from '../../vendor/three.module.js';
 import { mergeGeometries } from '../../vendor/BufferGeometryUtils.js';
 import { getTex, getFacade, getStorefront } from '../core/textures.js';
-import { makeRNG, boxAt } from '../core/utils.js';
+import { makeRNG, boxAt, SpatialGrid } from '../core/utils.js';
 import { makeBuilding, makeHouse, makeGarage, makeWarehouse, FLOOR_H } from './buildings.js';
 import { PropSystem } from './props.js';
 
@@ -75,7 +75,7 @@ export class City {
     this.scene = scene;
     this.rng = makeRNG(seed);
     this.mats = buildMaterials();
-    this.props = new PropSystem(scene);
+    this.props = new PropSystem(scene, CELL);
 
     this.colliders = [];     // {minX,minZ,maxX,maxZ,h}
     this.pois = [];          // {type,name,x,z,...}
@@ -846,6 +846,7 @@ export class City {
       const dz = grp.userData.cz - pz;
       grp.visible = (dx * dx + dz * dz) < radius * radius;
     });
+    this.props.updateCulling(px, pz, radius);
   }
 
   /** Подсветка окон и вывесок ночью. */
@@ -856,10 +857,22 @@ export class City {
   }
 
   /** Коллайдеры рядом с точкой. */
-  collidersNear(x, z, r) {
-    const out = [];
+  /** Строит пространственную сетку коллайдеров — перебор всех 1500+ каждый кадр слишком дорог. */
+  _buildColliderGrid() {
+    this._grid = new SpatialGrid(24);
     for (let i = 0; i < this.colliders.length; i++) {
       const b = this.colliders[i];
+      this._grid.insertBox(b, b.minX, b.minZ, b.maxX, b.maxZ);
+    }
+    this._gridSize = this.colliders.length;
+  }
+
+  collidersNear(x, z, r) {
+    if (!this._grid || this._gridSize !== this.colliders.length) this._buildColliderGrid();
+    const cand = this._grid.query(x, z, r);
+    const out = [];
+    for (let i = 0; i < cand.length; i++) {
+      const b = cand[i];
       if (b.maxX < x - r || b.minX > x + r || b.maxZ < z - r || b.minZ > z + r) continue;
       out.push(b);
     }

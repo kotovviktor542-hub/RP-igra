@@ -2,6 +2,52 @@
    (idle / walk / run / sit / карабканье). Используется и игроком, и NPC. */
 
 import * as THREE from '../../vendor/three.module.js';
+import { mergeGeometries } from '../../vendor/BufferGeometryUtils.js';
+
+/** Общий материал для «слитых» NPC: цвет берётся из вершин. */
+let NPC_MAT = null;
+function npcMat() {
+  if (!NPC_MAT) NPC_MAT = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.86 });
+  return NPC_MAT;
+}
+
+/**
+ * Склеивает меши внутри каждого сустава в один — NPC начинает занимать
+ * ~6 draw calls вместо ~18. Анимация не страдает: суставы остаются отдельными.
+ */
+export function mergeJointMeshes(root) {
+  const groups = [];
+  root.traverse(o => { if (o.isObject3D && !o.isMesh) groups.push(o); });
+  for (const g of groups) {
+    const leaves = g.children.filter(c => c.isMesh && c.children.length === 0);
+    if (leaves.length < 2) continue;
+    const geos = [];
+    let ok = true;
+    for (const mesh of leaves) {
+      let geo = mesh.geometry.clone();
+      if (geo.index) geo = geo.toNonIndexed();
+      geo.applyMatrix4(mesh.matrix);
+      const n = geo.attributes.position.count;
+      if (!geo.attributes.normal) geo.computeVertexNormals();
+      if (!geo.attributes.uv) geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(n * 2), 2));
+      const col = new Float32Array(n * 3);
+      const c = mesh.material && mesh.material.color ? mesh.material.color : new THREE.Color(0xffffff);
+      for (let i = 0; i < n; i++) { col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b; }
+      geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+      for (const name of Object.keys(geo.attributes)) {
+        if (!['position', 'normal', 'uv', 'color'].includes(name)) geo.deleteAttribute(name);
+      }
+      geos.push(geo);
+    }
+    const merged = ok && geos.length ? mergeGeometries(geos, false) : null;
+    if (!merged) continue;
+    for (const mesh of leaves) { g.remove(mesh); mesh.geometry.dispose(); }
+    const m = new THREE.Mesh(merged, npcMat());
+    m.castShadow = true;
+    g.add(m);
+  }
+  return root;
+}
 
 const SKIN = [0xf0c9a4, 0xe0b088, 0xc89468, 0x9c6b45, 0x7a4f32, 0xf7d7bb];
 const HAIR = [0x22181a, 0x4a2f1e, 0x8a6a3a, 0xc9a86a, 0x6b6b6b, 0x2a2a2e];

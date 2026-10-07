@@ -3,10 +3,28 @@
 import * as THREE from '../../vendor/three.module.js';
 
 export const QUALITY = {
-  LOW:    { shadow: 0,    pr: 1.0,  far: 260, fog: 170, aa: false, npc: 10, traffic: 8,  chunkR: 150 },
-  MEDIUM: { shadow: 1024, pr: 1.25, far: 420, fog: 280, aa: false, npc: 20, traffic: 16, chunkR: 230 },
-  HIGH:   { shadow: 2048, pr: 1.6,  far: 650, fog: 430, aa: true,  npc: 34, traffic: 26, chunkR: 330 }
+  LOW:    { shadow: 0,    pr: 1.0,  far: 230, fog: 150, aa: false, npc: 8,  traffic: 7,  chunkR: 130, scale: 0.72, props: 0 },
+  MEDIUM: { shadow: 1024, pr: 1.25, far: 400, fog: 270, aa: false, npc: 18, traffic: 14, chunkR: 215, scale: 0.9, props: 1 },
+  HIGH:   { shadow: 2048, pr: 1.6,  far: 650, fog: 430, aa: true,  npc: 34, traffic: 26, chunkR: 330, scale: 1.0, props: 2 }
 };
+
+/** Телефон/планшет? На таких устройствах по умолчанию включаем низкое качество. */
+export function isMobileDevice() {
+  const coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+  const ua = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '');
+  return coarse || ua;
+}
+
+/** Качество по умолчанию: сохранённое пользователем, иначе по типу устройства. */
+export function defaultQuality() {
+  try {
+    const saved = localStorage.getItem('rp:quality');
+    if (saved && QUALITY[saved]) return saved;
+  } catch { /* ignore */ }
+  const mem = navigator.deviceMemory || 4;
+  if (isMobileDevice()) return mem >= 6 ? 'MEDIUM' : 'LOW';
+  return 'HIGH';
+}
 
 export class Engine {
   constructor(canvas, qualityName = 'MEDIUM') {
@@ -20,7 +38,10 @@ export class Engine {
       powerPreference: 'high-performance',
       stencil: false
     });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, this.quality.pr));
+    this.renderScale = this.quality.scale;      // адаптивное разрешение (0.55…1)
+    this.adaptive = true;                       // автоподстройка под 50+ fps
+    this.targetFps = 50;
+    this._applyPixelRatio();
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
@@ -41,6 +62,19 @@ export class Engine {
     this._buildLights();
     this.resize();
     window.addEventListener('resize', () => this.resize());
+  }
+
+  /** Пиксель-рейт = devicePixelRatio, ограниченный качеством и масштабом рендера. */
+  _applyPixelRatio() {
+    const pr = Math.min(window.devicePixelRatio || 1, this.quality.pr) * this.renderScale;
+    this.renderer.setPixelRatio(Math.max(0.45, pr));
+  }
+
+  /** Принудительно задать масштаб рендера (1 = полное разрешение экрана). */
+  setRenderScale(s) {
+    this.renderScale = Math.max(0.5, Math.min(1, s));
+    this._applyPixelRatio();
+    this.resize();
   }
 
   /* -------------------- небо -------------------- */
@@ -100,8 +134,8 @@ export class Engine {
       const s = this.sun.shadow;
       s.mapSize.set(this.quality.shadow, this.quality.shadow);
       s.camera.near = 1;
-      s.camera.far = 320;
-      const d = 95;
+      s.camera.far = 240;
+      const d = 62;
       s.camera.left = -d; s.camera.right = d;
       s.camera.top = d; s.camera.bottom = -d;
       s.bias = -0.0006;
@@ -180,8 +214,10 @@ export class Engine {
     if (!q) return;
     this.quality = q;
     this.qualityName = name;
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, q.pr));
+    this.renderScale = q.scale;
+    this._applyPixelRatio();
     this.renderer.shadowMap.enabled = q.shadow > 0;
+    try { localStorage.setItem('rp:quality', name); } catch { /* ignore */ }
     if (q.shadow > 0) {
       this.sun.castShadow = true;
       this.sun.shadow.mapSize.set(q.shadow, q.shadow);
@@ -219,12 +255,45 @@ export class Engine {
       if (dt > 0.1) dt = 0.1;      // защита от фриз-скачков
 
       acc += dt; frames++;
-      if (acc >= 0.5) { this.fps = Math.round(frames / acc); frames = 0; acc = 0; }
+      if (acc >= 0.5) {
+        this.fps = Math.round(frames / acc);
+        frames = 0; acc = 0;
+        this._autoScale();
+      }
 
       for (let i = 0; i < this.updaters.length; i++) this.updaters[i](dt, this);
       this.renderer.render(this.scene, this.camera);
     };
     loop();
+  }
+
+  /** Автоподстройка разрешения: мало fps — рисуем мельче, много — возвращаем чёткость. */
+  _autoScale() {
+    if (!this.adaptive) return;
+    const now = performance.now();
+    this._lastScaleAt = this._lastScaleAt || 0;
+    if (now - this._lastScaleAt < 2000) return;        // не чаще раза в 2 с
+
+    const min = 0.55, max = this.quality.scale;
+    this._lowStreak = this._lowStreak || 0;
+    this._highStreak = this._highStreak || 0;
+
+    if (this.fps < this.targetFps - 8) { this._lowStreak++; this._highStreak = 0; }
+    else if (this.fps > this.targetFps + 12) { this._highStreak++; this._lowStreak = 0; }
+    else { this._lowStreak = 0; this._highStreak = 0; }
+
+    // пересоздание буфера — дорогая операция, поэтому только после устойчивой просадки
+    if (this._lowStreak >= 3 && this.renderScale > min) {
+      this.renderScale = Math.max(min, this.renderScale - 0.1);
+    } else if (this._highStreak >= 6 && this.renderScale < max) {
+      this.renderScale = Math.min(max, this.renderScale + 0.05);
+    } else {
+      return;
+    }
+    this._lowStreak = 0; this._highStreak = 0;
+    this._lastScaleAt = now;
+    this._applyPixelRatio();
+    this.resize();
   }
 
   stop() {

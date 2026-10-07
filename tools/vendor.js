@@ -19,7 +19,16 @@ if (!fs.existsSync(three)) {
 
 fs.copyFileSync(three, path.join(out, 'three.module.js'));
 
-const src = fs.readFileSync(utils, 'utf8').replace(/from 'three'/g, "from './three.module.js'");
-fs.writeFileSync(path.join(out, 'BufferGeometryUtils.js'), src);
+const copyJsm = (rel, file) => {
+  const srcPath = path.join(root, 'node_modules', 'three', 'examples', 'jsm', ...rel);
+  const src = fs.readFileSync(srcPath, 'utf8')
+    .replace(/from 'three'/g, "from './three.module.js'")
+    .replace(/from '\.\.\/utils\/BufferGeometryUtils\.js'/g, "from './BufferGeometryUtils.js'");
+  fs.writeFileSync(path.join(out, file), src);
+};
 
-console.log('vendor: three.module.js + BufferGeometryUtils.js обновлены');
+copyJsm(['utils', 'BufferGeometryUtils.js'], 'BufferGeometryUtils.js');
+copyJsm(['loaders', 'GLTFLoader.js'], 'GLTFLoader.js');
+copyJsm(['utils', 'SkeletonUtils.js'], 'SkeletonUtils.js');
+
+console.log('vendor: three.module.js, BufferGeometryUtils, GLTFLoader, SkeletonUtils обновлены');
