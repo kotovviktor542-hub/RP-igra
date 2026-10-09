@@ -44,8 +44,21 @@ export const ITEMS = {
   crate:      { name: 'Ящик груза',    cat: 'cargo',  weight: 12.0, price: 0, questOnly: true },
 
   // оружие
-  pistol:     { name: 'Пистолет',      cat: 'weapon', weight: 1.1, price: 900, equip: 'pistol' },
-  ammo:       { name: 'Патроны 9 мм',  cat: 'weapon', weight: 0.3, price: 45, ammo: 12 },
+  pistol:     { name: 'Пистолет',      cat: 'weapon', weight: 1.1, price: 900,  equip: 'pistol' },
+  revolver:   { name: 'Револьвер',     cat: 'weapon', weight: 1.4, price: 2200, equip: 'revolver' },
+  smg:        { name: 'Пистолет-пулемёт', cat: 'weapon', weight: 3.1, price: 4800, equip: 'smg' },
+  shotgun:    { name: 'Дробовик',      cat: 'weapon', weight: 3.8, price: 3600, equip: 'shotgun' },
+  rifle:      { name: 'Автомат',       cat: 'weapon', weight: 4.2, price: 9500, equip: 'rifle' },
+
+  // патроны (пачками)
+  ammo9:      { name: 'Патроны 9 мм (24)',   cat: 'weapon', weight: 0.5, price: 45,  ammoType: '9mm', ammo: 24 },
+  ammo357:    { name: 'Патроны .357 (18)',   cat: 'weapon', weight: 0.6, price: 70,  ammoType: '357', ammo: 18 },
+  ammo12:     { name: 'Патроны 12к (16)',    cat: 'weapon', weight: 0.9, price: 80,  ammoType: '12g', ammo: 16 },
+  ammo762:    { name: 'Патроны 7.62 (30)',   cat: 'weapon', weight: 1.1, price: 120, ammoType: '762', ammo: 30 },
+  holster:    { name: 'Кобура',        cat: 'weapon', weight: 0.4, price: 180 },
+  armor:      { name: 'Бронежилет',    cat: 'weapon', weight: 5.0, price: 1400, armor: 50 },
+  // старый предмет из прежних сейвов — остаётся рабочим
+  ammo:       { name: 'Патроны 9 мм',  cat: 'weapon', weight: 0.3, price: 45, ammoType: '9mm', ammo: 12 },
 
   // прочее
   cigarettes: { name: 'Сигареты',      cat: 'misc',   weight: 0.1, price: 11, mood: 7, health: -3 },
@@ -59,7 +72,9 @@ export const SHOP_STOCK = {
   cafe:        ['coffee', 'sandwich', 'burger', 'cola', 'pizza'],
   pharmacy:    ['bandage', 'medkit', 'painkiller', 'water'],
   electronics: ['phone', 'laptop', 'radio', 'gps'],
-  hardware:    ['repairkit', 'jerrycan', 'toolbox', 'lockpick', 'pistol', 'ammo'],
+  hardware:    ['repairkit', 'jerrycan', 'toolbox', 'lockpick'],
+  guns:        ['pistol', 'revolver', 'shotgun', 'smg', 'rifle',
+                'ammo9', 'ammo357', 'ammo12', 'ammo762', 'holster', 'armor'],
   clothes:     ['tshirt', 'jacket', 'suit', 'jeans', 'sneakers', 'cap'],
   autoparts:   ['repairkit', 'jerrycan', 'sparepart', 'toolbox']
 };

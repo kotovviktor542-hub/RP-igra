@@ -99,6 +99,18 @@ export class Controls {
     $('b-action').addEventListener('click', () => this.game.interact());
     $('b-punch').addEventListener('click', () => this.game.attack());
     $('b-aim').addEventListener('click', () => this.game.toggleAim());
+    const rl = $('b-reload');
+    if (rl) rl.addEventListener('click', () => this.game.reload());
+    // удержание кнопки огня — автоматическая стрельба
+    const fire = $('b-punch');
+    if (fire) {
+      const start = e => { e.preventDefault(); this.game.setFiring(true); };
+      const stop = () => this.game.setFiring(false);
+      fire.addEventListener('pointerdown', start);
+      fire.addEventListener('pointerup', stop);
+      fire.addEventListener('pointercancel', stop);
+      fire.addEventListener('pointerleave', stop);
+    }
     $('b-horn').addEventListener('click', () => this.game.horn());
     $('b-light').addEventListener('click', () => this.game.toggleLights());
 
@@ -122,7 +134,10 @@ export class Controls {
         case 'KeyJ': this.game.panels.toggle('jobs'); break;
         case 'KeyP': case 'Tab': e.preventDefault(); this.game.panels.toggle('phone'); break;
         case 'KeyH': this.game.horn(); break;
-        case 'KeyR': this.game.attack(); break;
+        case 'KeyR': this.game.reload(); break;
+        case 'KeyG': this.game.attack(); break;
+        case 'Digit1': case 'Digit2': case 'Digit3': case 'Digit4': case 'Digit5':
+          this.game.quickWeapon(+e.code.slice(5)); break;
         case 'KeyQ': this.game.toggleAim(); break;
         case 'KeyL': this.game.toggleLights(); break;
         case 'KeyV': this.game.player3d.firstPerson = !this.game.player3d.firstPerson; break;

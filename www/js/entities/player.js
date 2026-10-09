@@ -5,6 +5,7 @@ import * as THREE from '../../vendor/three.module.js';
 import { Humanoid } from './humanoid.js';
 import { makeCharacter } from './character.js';
 import { clamp, damp, resolveCircleBoxes, dist2D } from '../core/utils.js';
+import { makeWeaponMesh, FOREGRIP } from './weaponmodels.js';
 
 const WALK = 2.6;
 const RUN = 6.2;
@@ -19,52 +20,6 @@ const _v3 = new THREE.Vector3();
 const _q1 = new THREE.Quaternion();
 const _q2 = new THREE.Quaternion();
 const _q3 = new THREE.Quaternion();
-
-/** Небольшой пистолет из нескольких деталей: рамка, затвор, ствол, рукоять, скоба. */
-function makePistol() {
-  const g = new THREE.Group();
-  const steel = new THREE.MeshStandardMaterial({ color: 0x23262b, metalness: 0.85, roughness: 0.35 });
-  const grip = new THREE.MeshStandardMaterial({ color: 0x15171a, metalness: 0.15, roughness: 0.8 });
-
-  const slide = new THREE.Mesh(new THREE.BoxGeometry(0.175, 0.038, 0.032), steel);
-  slide.position.set(0.02, 0.052, 0);
-  g.add(slide);
-
-  const frame = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.022, 0.028), steel);
-  frame.position.set(0.012, 0.028, 0);
-  g.add(frame);
-
-  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.009, 0.009, 0.03, 10), steel);
-  barrel.rotation.z = Math.PI / 2;
-  barrel.position.set(0.112, 0.052, 0);
-  g.add(barrel);
-
-  const handle = new THREE.Mesh(new THREE.BoxGeometry(0.036, 0.1, 0.028), grip);
-  handle.position.set(-0.042, -0.025, 0);
-  handle.rotation.z = 0.22;
-  g.add(handle);
-
-  const guard = new THREE.Mesh(new THREE.TorusGeometry(0.026, 0.006, 6, 12, Math.PI * 1.2), steel);
-  guard.rotation.set(Math.PI / 2, 0, -0.4);
-  guard.position.set(-0.004, -0.004, 0);
-  g.add(guard);
-
-  const sight = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.01, 0.008), steel);
-  sight.position.set(0.09, 0.075, 0);
-  g.add(sight);
-
-  const flash = new THREE.Mesh(
-    new THREE.ConeGeometry(0.035, 0.08, 7),
-    new THREE.MeshBasicMaterial({ color: 0xffd27a, transparent: true, opacity: 0.9 }));
-  flash.name = 'flash';
-  flash.rotation.z = -Math.PI / 2;
-  flash.position.set(0.17, 0.052, 0);
-  flash.visible = false;
-  g.add(flash);
-
-  g.traverse(o => { o.castShadow = false; o.receiveShadow = false; });
-  return g;
-}
 
 export class Player {
   constructor(scene, camera, look) {
@@ -113,6 +68,9 @@ export class Player {
     this.weaponKind = null;   // 'pistol' | null
     this.recoilT = 0;         // таймер отдачи
     this.fireCd = 0;
+    this.reloadT = 0;         // таймер перезарядки
+    this.reloadTotal = 0;
+    this.weaponTwo = false;   // двуручный хват
     this.camKick = 0;         // подброс камеры от выстрела
     this._flash = null;
   }
@@ -176,8 +134,11 @@ export class Player {
       this.weapon.parent && this.weapon.parent.remove(this.weapon);
       this.weapon.traverse(o => { if (o.geometry) o.geometry.dispose(); });
       this.weapon = null;
+      this._flash = null;
+      this._flashLight = null;
     }
     this.weaponKind = kind || null;
+    this.weaponTwo = !!FOREGRIP[kind];
     if (!kind || !b || b.proc || !b.handR) return false;
     // кость кисти может быть в «сантиметровых» единицах — компенсируем масштаб
     b.handR.updateWorldMatrix(true, false);
@@ -185,24 +146,46 @@ export class Player {
     const inv = 1 / (_v1.x || 1);
     this.weapon = new THREE.Group();
     this.weapon.scale.setScalar(inv);
-    const gun = makePistol();
+    const gun = makeWeaponMesh(kind);
+    if (!gun) { this.weaponKind = null; return false; }
+    // длинные стволы держатся чуть дальше от кисти
     gun.position.set(0.02, 0.0, 0.02);
     gun.rotation.set(Math.PI / 2, Math.PI / 2, 0);
     this.weapon.add(gun);
     b.handR.add(this.weapon);
     this._flash = this.weapon.getObjectByName('flash');
+    this._flashLight = this.weapon.getObjectByName('flashLight');
     return true;
   }
 
-  /** Выстрел: отдача руки, подброс камеры, вспышка. */
-  fire() {
-    if (!this.weaponKind || this.fireCd > 0 || this.mode === 'drive') return false;
+  /**
+   * Выстрел: отдача руки, подброс камеры, вспышка.
+   * @param {number} rate задержка до следующего выстрела, с
+   * @param {number} recoil сила подброса камеры
+   */
+  fire(rate = 0.3, recoil = 0.075) {
+    if (!this.weaponKind || this.fireCd > 0 || this.reloadT > 0 || this.mode === 'drive') return false;
     this.recoilT = RECOIL_TIME;
-    this.fireCd = 0.3;
-    this.camKick = 0.075;
-    if (this._flash) { this._flash.visible = true; this._flashT = 0.055; }
+    this.fireCd = rate;
+    this.camKick = recoil;
+    if (this._flash) {
+      this._flash.visible = true;
+      this._flash.rotation.x = Math.random() * Math.PI;
+      this._flashT = 0.055;
+    }
+    if (this._flashLight) this._flashLight.intensity = 6;
     return true;
   }
+
+  /** Запускает анимацию перезарядки. */
+  startReload(time = 2) {
+    if (!this.weaponKind || this.reloadT > 0 || this.mode === 'drive') return false;
+    this.reloadT = time;
+    this.reloadTotal = time;
+    return true;
+  }
+
+  get reloading() { return this.reloadT > 0; }
 
   /** Начинает удар. Возвращает false, если ещё перезарядка или игрок за рулём. */
   punch() {
@@ -332,9 +315,15 @@ export class Player {
     if (this.camKick > 0) this.camKick = Math.max(0, this.camKick - dt * 0.42);
     if (this._flashT > 0) {
       this._flashT -= dt;
-      if (this._flashT <= 0 && this._flash) this._flash.visible = false;
+      if (this._flashT <= 0) {
+        if (this._flash) this._flash.visible = false;
+        if (this._flashLight) this._flashLight.intensity = 0;
+      }
     }
-    if (this.punchT > 0) {
+    if (this.reloadT > 0) this.reloadT = Math.max(0, this.reloadT - dt);
+    if (this.reloadT > 0) {
+      this._poseReload(1 - this.reloadT / (this.reloadTotal || 1));
+    } else if (this.punchT > 0) {
       this.punchT -= dt;
       this._poseArms(1 - Math.max(0, this.punchT) / PUNCH_TIME, this.punchHand);
     } else if (this.aiming) {
@@ -358,6 +347,19 @@ export class Player {
     const bend = 0.25 + Math.abs(s) * 0.35;
     set(b.foreR, 0, 0, -r.foreZ - bend * 0.6);
     set(b.foreL, 0, 0, r.foreZ + bend * 0.6);
+  }
+
+  /** Поза перезарядки: ствол опускается, левая рука идёт к магазину и обратно. */
+  _poseReload(k) {
+    const b = this._armBones();
+    if (!b || b.proc) return;
+    this.root.updateMatrixWorld(true);
+    const dip = Math.sin(Math.min(1, Math.max(0, k)) * Math.PI);   // 0→1→0
+    this._aimBone(b.armR, b.foreR, { x: 0.22, y: -0.75 - dip * 0.15, z: 0.62 - dip * 0.2 });
+    this._aimBone(b.foreR, b.handR || b.foreR.children[0], { x: 0.05, y: -0.35 + dip * 0.1, z: 0.9 });
+    // левая рука ныряет к поясу за магазином и возвращается к оружию
+    this._aimBone(b.armL, b.foreL, { x: -0.25, y: -0.9 + dip * 0.35, z: 0.3 + dip * 0.35 });
+    this._aimBone(b.foreL, b.handL || b.foreL.children[0], { x: -0.1 + dip * 0.25, y: -0.5 + dip * 0.4, z: 0.75 });
   }
 
   /** Разворачивает кость так, чтобы она смотрела в заданном направлении (в локальных осях игрока). */
@@ -391,6 +393,15 @@ export class Player {
       const r = this.recoilT > 0 ? this.recoilT / RECOIL_TIME : 0;
       const up = r * 0.5, back = r * 0.35;
       const gun = this.weaponKind ? 1 : 0;
+      if (this.weaponTwo) {
+        // длинный ствол: правая рука у рукояти и прижата к корпусу,
+        // левая вытянута вперёд и удерживает цевьё
+        this._aimBone(b.armR, b.foreR, { x: 0.34, y: -0.52 + up, z: 0.70 - back });
+        this._aimBone(b.foreR, b.handR || b.foreR.children[0], { x: -0.22, y: -0.10 + up, z: 0.95 });
+        this._aimBone(b.armL, b.foreL, { x: -0.16, y: -0.34 + up * 0.7, z: 0.92 - back * 0.7 });
+        this._aimBone(b.foreL, b.handL || b.foreL.children[0], { x: 0.18, y: -0.02 + up * 0.7, z: 0.98 });
+        return;
+      }
       // обе руки вперёд, локти чуть согнуты; с пистолетом руки сведены к центру
       this._aimBone(b.armR, b.foreR, { x: 0.30 - gun * 0.12, y: -0.42 + up, z: 0.86 - back });
       this._aimBone(b.armL, b.foreL, { x: -0.30 + gun * 0.14, y: -0.42 + up * 0.8, z: 0.86 - back });

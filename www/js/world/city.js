@@ -97,6 +97,7 @@ export class City {
     this._buildRoadGraph();
     this._buildBlocks();
     this.props.build();
+    this._assignSpecialShops();
     this._finishChunks();
     return this;
   }
@@ -791,6 +792,39 @@ export class City {
     }
     this.props.add('lightPoleTall', bx - w * 0.4, bz + bd * 0.32, 0);
     this.props.add('lightPoleTall', bx + w * 0.4, bz + bd * 0.32, 0);
+  }
+
+  /**
+   * Гарантирует, что в городе есть редкие, но важные магазины:
+   * оружейные и большие супермаркеты. Иначе рандом может их не выдать.
+   */
+  _assignSpecialShops() {
+    const shops = this.pois.filter(p => p.type === 'shop');
+    if (!shops.length) return;
+    const force = [
+      { kind: 'guns', name: 'Оружейный «Калибр»', count: 2 },
+      { kind: 'clothes', name: 'Бутик «Витрина»', count: 1 },
+      { kind: 'market', name: 'Супермаркет «Горизонт»', count: 1 }
+    ];
+    const used = new Set();
+    for (const f of force) {
+      for (let k = 0; k < f.count; k++) {
+        // берём магазин подальше от уже выбранных, чтобы они не слиплись
+        let best = null, bestScore = -1;
+        for (let i = 0; i < shops.length; i++) {
+          if (used.has(i)) continue;
+          const s = shops[i];
+          let d = 1e9;
+          used.forEach(u => { d = Math.min(d, Math.hypot(shops[u].x - s.x, shops[u].z - s.z)); });
+          const score = used.size ? d : Math.abs(s.x) + Math.abs(s.z);
+          if (score > bestScore) { bestScore = score; best = i; }
+        }
+        if (best === null) return;
+        used.add(best);
+        shops[best].shopKind = f.kind;
+        shops[best].name = f.count > 1 ? `${f.name} #${k + 1}` : f.name;
+      }
+    }
   }
 
   /* --- регистрация магазина --- */

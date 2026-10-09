@@ -2,6 +2,7 @@
    Чистая логика без three.js — покрыта тестами. */
 
 import { ITEMS, SHOP_STOCK, JOBS, QUESTS, ECONOMY, DEALERSHIP } from './content.js';
+import { WEAPONS, normalizeAmmo, addAmmo } from './weapons.js';
 
 const SAVE_KEY = 'rp:save:v2';
 export const SAVE_VERSION = 2;
@@ -20,7 +21,9 @@ export function createPlayer(opts = {}) {
     rep: 0,
 
     stats: { health: 100, hunger: 80, thirst: 80, energy: 90 },
-    ammo: 0,
+    ammo: {},                 // калибр -> патронов в запасе
+    mags: {},                 // ствол -> патронов в магазине
+    armor: 0,
     equipped: null,
     licenses: {},
 
@@ -100,10 +103,15 @@ export function useItem(p, id, ctx = {}) {
     if (p.stats.health !== before.health) parts.push(`здоровье ${sign(p.stats.health - before.health)}`);
     if (p.stats.energy !== before.energy) parts.push(`энергия ${sign(p.stats.energy - before.energy)}`);
     msgs.push(`${it.name}: ${parts.join(', ') || 'без эффекта'}`);
+  } else if (it.armor) {
+    p.armor = Math.min(100, (p.armor || 0) + it.armor);
+    msgs.push(`Надел бронежилет (броня ${p.armor})`);
   } else if (it.ammo) {
-    p.ammo = (p.ammo || 0) + it.ammo;
-    msgs.push(`Зарядил ${it.ammo} патронов (всего ${p.ammo})`);
+    const type = it.ammoType || '9mm';
+    addAmmo(p, type, it.ammo);
+    msgs.push(`+${it.ammo} патронов ${type} (в запасе ${p.ammo[type]})`);
   } else if (it.equip) {
+    normalizeAmmo(p);
     p.equipped = p.equipped === it.equip ? null : it.equip;
     return { ok: true, messages: [p.equipped ? `В руках: ${it.name}` : `Убрал: ${it.name}`], equip: p.equipped };
   } else if (it.wear) {
@@ -379,6 +387,9 @@ export function load() {
     d.stats2 = d.stats2 || { distDriven: 0, distWalked: 0, visited: {} };
     d.quests = d.quests || {};
     d.licenses = d.licenses || {};
+    normalizeAmmo(d);          // старые сейвы: ammo было числом
+    if (!Number.isFinite(d.armor)) d.armor = 0;
+    if (d.equipped && !WEAPONS[d.equipped]) d.equipped = null;
     return d;
   } catch (e) { return null; }
 }

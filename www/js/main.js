@@ -17,6 +17,7 @@ import { BigMap } from './ui/map.js';
 import { Creator } from './ui/creator.js';
 import { OnlineScreen } from './ui/online.js';
 import { Auth } from './net/auth.js';
+import { WEAPONS, AMMO, reload as reloadWeapon, fireShot, damageAt, ammoLabel, normalizeAmmo } from './game/weapons.js';
 import { RoomClient } from './net/room.js';
 import { Controls } from './ui/controls.js';
 import { RadialMenu } from './ui/radial.js';
@@ -811,6 +812,11 @@ class Game {
   /** Игрока ударили. */
   hurtPlayer(dmg, who) {
     const p = this.player;
+    if (p.armor > 0) {
+      const absorbed = Math.min(p.armor, dmg * 0.6);
+      p.armor = Math.max(0, Math.round(p.armor - absorbed));
+      dmg -= absorbed;
+    }
     p.stats.health = Math.max(0, p.stats.health - dmg);
     this.hud.flashDamage && this.hud.flashDamage();
     if (who && !this._hitMsgCd) {
@@ -848,7 +854,10 @@ class Game {
       x => x.type === 'police' || x.type === 'cityhall');
     if (st) this.player3d.teleport(st.poi.x, st.poi.z + 6, 0);
     this.player.equipped = null;
-    this.player.ammo = 0;
+    normalizeAmmo(this.player);
+    for (const k of Object.keys(this.player.ammo)) this.player.ammo[k] = 0;
+    for (const k of Object.keys(this.player.mags)) this.player.mags[k] = 0;
+    this.player.inventory = this.player.inventory.filter(i => !WEAPONS[i.id]);
     this.syncWeapon();
     this.hud.toast(`Задержан. Штраф ${fine} $, оружие изъято`, 'bad');
     this.chat.add('* Тебя задержали', 'sys');
@@ -856,32 +865,92 @@ class Game {
 
   /** Кнопка атаки: с оружием в руках — выстрел, иначе удар кулаком. */
   attack() {
-    if (this.player.equipped === 'pistol') this.shoot();
+    if (WEAPONS[this.player.equipped]) this.shoot();
     else this.punch();
   }
 
-  /** Выстрел: отдача, вспышка, попадание по лучу от камеры. */
+  /** Удержание кнопки огня: автоматическое оружие стреляет очередью. */
+  setFiring(on) {
+    this.firing = !!on && !!WEAPONS[this.player?.equipped];
+    if (this.firing) this.attack();
+  }
+
+  /** Быстрый выбор ствола цифрами 1..5 (по списку в инвентаре). */
+  quickWeapon(slot) {
+    const p = this.player;
+    if (!p) return;
+    const owned = p.inventory.filter(i => WEAPONS[i.id]).map(i => i.id);
+    if (slot === 1 && !owned.length) return;
+    const id = owned[slot - 1];
+    if (!id) { this.hud.toast('Нет такого ствола'); return; }
+    p.equipped = p.equipped === id ? null : id;
+    this.syncWeapon();
+    this.hud.toast(p.equipped ? `В руках: ${WEAPONS[id].name} · ${ammoLabel(p, id)}` : 'Убрал оружие');
+  }
+
+  /** Обновляет индикатор патронов и кнопку перезарядки. */
+  _weaponHud() {
+    const p = this.player;
+    if (!p) return;
+    const armed = !!WEAPONS[p.equipped];
+    this.hud.setAmmo(armed ? ammoLabel(p, p.equipped) : '', armed);
+    this.hud.setArmor(p.armor || 0);
+  }
+
+  /** Перезарядка текущего ствола. */
+  reload() {
+    const p = this.player, p3 = this.player3d;
+    const wid = p?.equipped;
+    const w = WEAPONS[wid];
+    if (!w) { this.hud.toast('В руках нет оружия'); return; }
+    if (p3.reloading) return;
+    const r = reloadWeapon(p, wid);
+    if (!r.ok) { this.hud.toast(r.reason, 'bad'); return; }
+    p3.startReload(w.reloadTime);
+    this.hud.toast(`Перезарядка… ${w.name}`);
+    setTimeout(() => {
+      if (this.player === p) this.hud.toast(`${w.name}: ${ammoLabel(p, wid)}`, 'good');
+      this.syncWeapon();
+    }, w.reloadTime * 1000);
+    this.syncWeapon();
+  }
+
+  /** Выстрел: отдача, вспышка, попадание по лучу от камеры. Параметры — из ствола. */
   shoot() {
     const p3 = this.player3d;
+    const p = this.player;
     if (!p3) return;
+    const wid = p.equipped;
+    const w = WEAPONS[wid];
+    if (!w) return;
     if (p3.vehicle) { this.hud.toast('Из машины не постреляешь'); return; }
-    if (!this.player.ammo) { this.hud.toast('Нет патронов'); return; }
+    if (p3.reloading) return;
+    if (p3.fireCd > 0) return;
+
+    const shot = fireShot(p, wid);
+    if (!shot.ok) {
+      this.hud.toast(shot.reason, 'bad');
+      if (shot.empty) this.reload();
+      return;
+    }
     if (!p3.aiming) this.toggleAim(true);
-    if (!p3.fire()) return;                       // ещё не перезарядился
+    if (!p3.fire(w.rate, w.recoil)) return;
 
-    this.player.ammo--;
-    this.chat.add('*выстрел*', 'sys');
+    this._weaponHud();
 
-    // луч из камеры вперёд
+    // луч из камеры вперёд с разбросом ствола
     const cam = this.camera;
     const ox = cam.position.x, oz = cam.position.z;
-    const dx = Math.sin(p3.camYaw), dz = Math.cos(p3.camYaw);
+    const spread = (w.spread * Math.PI / 180) * (p3.aiming ? 0.6 : 1.4);
+    const yaw = p3.camYaw + (Math.random() - 0.5) * spread;
+    const dx = Math.sin(yaw), dz = Math.cos(yaw);
+    const radius = w.pellets ? 1.9 : 0.85;
     const probe = (tx, tz) => {
       const rx = tx - ox, rz = tz - oz;
       const along = rx * dx + rz * dz;
-      if (along < 1 || along > 70) return 0;
+      if (along < 1 || along > w.range) return 0;
       const miss = Math.hypot(rx - dx * along, rz - dz * along);
-      return miss > 0.8 ? 0 : along;
+      return miss > radius ? 0 : along;
     };
 
     let best = null, bestT = 1e9, isCop = false;
@@ -897,19 +966,20 @@ class Game {
     }
 
     this.addWanted(isCop ? 2 : 1, 'стрельба');
-    this.peds.scare(p3.pos.x, p3.pos.z, 30);
+    this.peds.scare(p3.pos.x, p3.pos.z, w.pellets ? 40 : 30);
 
-    if (!best) { this.hud.toast(`Мимо · патронов ${this.player.ammo}`); return; }
+    const label = ammoLabel(p, wid);
+    if (!best) { this.hud.toast(`Мимо · ${label}`); return; }
+    const dmg = damageAt(wid, bestT);
     if (isCop) {
-      const r = this.police.hit(best, 60);
-      this.hud.toast(r === 'down' ? `Патрульный ранен · патронов ${this.player.ammo}`
-        : `Попал в патрульного · патронов ${this.player.ammo}`, 'bad');
+      const r = this.police.hit(best, dmg);
+      this.hud.toast(r === 'down' ? `Патрульный ранен · ${label}` : `Попал в патрульного · ${label}`, 'bad');
       if (r === 'down') this.addWanted(1.5, 'ранен полицейский');
       return;
     }
-    const r = this.peds.hit(best, 65, p3.pos.x, p3.pos.z);
+    const r = this.peds.hit(best, dmg, p3.pos.x, p3.pos.z);
     this.chat.add(`* Попадание: ${best.name}`, 'sys');
-    this.hud.toast(`${r === 'down' ? best.name + ' упал' : 'Попал по ' + best.name} · патронов ${this.player.ammo}`, 'bad');
+    this.hud.toast(`${r === 'down' ? best.name + ' упал' : 'Попал по ' + best.name} · ${label}`, 'bad');
     if (r === 'down') this.addWanted(1.5, 'тяжкое');
   }
 
@@ -917,15 +987,18 @@ class Game {
   syncWeapon() {
     const p3 = this.player3d;
     if (!p3) return;
-    const kind = this.player.equipped === 'pistol' ? 'pistol' : null;
+    const kind = WEAPONS[this.player.equipped] ? this.player.equipped : null;
     if (p3.weaponKind !== kind) p3.equipWeapon(kind);
     const btn = document.getElementById('b-punch');
     if (btn) {
       btn.innerHTML = kind ? WEAPON_ICON : FIST_ICON;
-      const label = kind ? 'Выстрел' : 'Удар';
+      const label = kind ? 'Выстрел: ' + WEAPONS[kind].name : 'Удар';
       btn.setAttribute('aria-label', label);
       btn.title = label;
     }
+    const rb = document.getElementById('b-reload');
+    if (rb) rb.classList.toggle('hidden', !kind);
+    this._weaponHud();
   }
 
   /** Удар кулаком: анимация + урон ближайшему NPC перед игроком. */
@@ -1138,7 +1211,11 @@ class Game {
     }
 
     // UI
-    this.hud.update(p, eng, p3, { wanted: this.wanted, ammo: p.ammo, armed: p.equipped === 'pistol' });
+    this.hud.update(p, eng, p3, {
+      wanted: this.wanted,
+      ammoText: WEAPONS[p.equipped] ? ammoLabel(p, p.equipped) : '',
+      armed: !!WEAPONS[p.equipped]
+    });
     this.hud.showSpeedo(driving);
     if (driving) {
       this.hud.drawSpeedo(p3.vehicle);

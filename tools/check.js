@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const WWW = path.join(ROOT, 'www');
+const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
 // localStorage-заглушка до импорта модулей
 globalThis.localStorage = {
@@ -18,6 +19,7 @@ globalThis.localStorage = {
 const { ITEMS, SHOP_STOCK, JOBS, QUESTS, ECONOMY, DEALERSHIP } =
   await import(path.join(WWW, 'js/game/content.js'));
 const S = await import(path.join(WWW, 'js/game/state.js'));
+const W = await import(path.join(WWW, 'js/game/weapons.js'));
 const { makeRNG, clamp, resolveCircleBoxes, scaleBoxUV, SpatialGrid, fmtMoney } =
   await import(path.join(WWW, 'js/core/utils.js'));
 
@@ -96,16 +98,16 @@ group('Файлы проекта', () => {
   ok('перекрестие прицела в разметке', /id="crosshair"/.test(html));
   ok('кнопки делятся на пешие и автомобильные', /foot-only/.test(html) && /drive-only/.test(html) && /classList\.toggle\('driving'/.test(ctrl));
   ok('иконки меняются при посадке в машину', /ICON\.exit/.test(ctrl) && /ICON\.turbo/.test(ctrl));
-  ok('удар на клавише R, прицел на Q', /'KeyR'/.test(ctrl) && /'KeyQ'/.test(ctrl));
+  ok('перезарядка на R, удар на G, прицел на Q', /'KeyR'/.test(ctrl) && /'KeyG'/.test(ctrl) && /'KeyQ'/.test(ctrl));
   ok('у удара есть перезарядка', /punchCd/.test(pl) && /PUNCH_TIME/.test(pl));
   ok('удар анимируется руками', /_poseArms/.test(pl) && /RightForeArm/.test(pl));
   ok('прицел приближает камеру через плечо', /setAim/.test(pl) && /aiming && !driving/.test(pl));
   ok('удар попадает только по NPC спереди', /punch\(\)/.test(mainJs) && /0\.35/.test(mainJs) && /punchHitMoment/.test(mainJs));
   ok('пистолет и патроны есть в предметах', /pistol:/.test(fs.readFileSync(path.join(WWW, 'js/game/content.js'), 'utf8')) && /ammo:/.test(fs.readFileSync(path.join(WWW, 'js/game/content.js'), 'utf8')));
-  ok('оружие берётся в руку', /equipWeapon/.test(pl) && /makePistol/.test(pl));
+  ok('оружие берётся в руку', /equipWeapon/.test(pl) && /makeWeaponMesh/.test(pl));
   ok('у выстрела есть отдача', /recoilT/.test(pl) && /camKick/.test(pl) && /RECOIL_TIME/.test(pl));
   ok('вспышка выстрела', /flash/.test(pl));
-  ok('выстрел тратит патроны', /this\.player\.ammo--/.test(mainJs) && /Нет патронов/.test(mainJs));
+  ok('выстрел тратит патроны', /fireShot\(p, wid\)/.test(mainJs) && /Патроны кончились/.test(read('www/js/game/weapons.js')));
   ok('кнопка атаки переключается на выстрел', /attack\(\)/.test(mainJs) && /WEAPON_ICON/.test(mainJs) && /this\.game\.attack\(\)/.test(ctrl));
   const aiJs = fs.readFileSync(path.join(WWW, 'js/entities/ai.js'), 'utf8');
   ok('у пешеходов есть здоровье', /hp: 100/.test(aiJs) && /hit\(n, dmg/.test(aiJs));
@@ -516,7 +518,6 @@ group('Симуляция: 200 смен подряд', () => {
 });
 
 group('Публичные комнаты (MQTT)', () => {
-  const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
   const mqttSrc = read('www/js/net/mqtt.js');
   const roomSrc = read('www/js/net/room.js');
   const cfgSrc = read('www/js/net/config.js');
@@ -540,6 +541,91 @@ group('Публичные комнаты (MQTT)', () => {
   ok('есть запасной оффлайн-режим без сети', /_checkOffline/.test(onlineSrc));
   ok('APK подписывается релизным ключом', /assembleRelease/.test(wf) && /apksigner/.test(wf));
   ok('ключ подписи лежит в репозитории', fs.existsSync(path.join(ROOT, 'android-keys/release.keystore')));
+});
+
+group('Оружие и боеприпасы', () => {
+  const p = S.createPlayer({ name: 'Стрелок' });
+
+  ok('стволов не меньше пяти', W.WEAPON_IDS.length >= 5, W.WEAPON_IDS.join(','));
+  ok('у каждого ствола калибр, магазин и урон', W.WEAPON_IDS.every(id => {
+    const w = W.WEAPONS[id];
+    return W.AMMO[w.ammo] && w.mag > 0 && w.dmg > 0 && w.rate > 0 && w.range > 0;
+  }));
+
+  ok('без патронов выстрела нет', W.fireShot(p, 'pistol').ok === false);
+  W.addAmmo(p, '9mm', 20);
+  ok('перезарядка набивает магазин', (() => {
+    const r = W.reload(p, 'pistol');
+    return r.ok && r.mag === 12 && W.ammoCount(p, '9mm') === 8;
+  })());
+  ok('выстрел тратит патрон из магазина', (() => {
+    const before = W.magCount(p, 'pistol');
+    const r = W.fireShot(p, 'pistol');
+    return r.ok && W.magCount(p, 'pistol') === before - 1;
+  })());
+  ok('магазин нельзя переполнить', (() => {
+    W.reload(p, 'pistol');
+    return W.magCount(p, 'pistol') === 12 && W.reload(p, 'pistol').ok === false;
+  })());
+  ok('магазин пустеет и требует перезарядки', (() => {
+    for (let i = 0; i < 12; i++) W.fireShot(p, 'pistol');
+    const r = W.fireShot(p, 'pistol');
+    return !r.ok && r.empty === true;
+  })());
+  ok('чужой калибр не подходит', (() => {
+    W.addAmmo(p, '762', 30);
+    const before = W.ammoCount(p, '762');
+    W.reload(p, 'pistol');
+    return W.ammoCount(p, '762') === before;
+  })());
+  ok('урон падает с дистанцией', W.damageAt('rifle', 5) > W.damageAt('rifle', 90));
+  ok('дробовик в упор сильнее автомата', W.damageAt('shotgun', 2) > W.damageAt('rifle', 2));
+  ok('дробовик на дистанции бесполезен', W.damageAt('shotgun', 40) < W.damageAt('pistol', 40));
+  ok('старый сейв с числом патронов чинится', (() => {
+    const old = { ammo: 15 };
+    W.normalizeAmmo(old);
+    return old.ammo['9mm'] === 15 && typeof old.mags === 'object';
+  })());
+
+  // покупка в оружейном магазине и экипировка
+  const q = S.createPlayer({ name: 'Покупатель' });
+  q.money = 20000;
+  ok('оружие продаётся в магазине', S.shopCatalog('guns').some(i => i.id === 'rifle'));
+  ok('ствол покупается и берётся в руки', (() => {
+    const r = S.buyItem(q, 'rifle', 1);
+    if (!r.ok) return false;
+    const u = S.useItem(q, 'rifle');
+    return u.ok && q.equipped === 'rifle';
+  })());
+  ok('патроны из пачки идут в запас', (() => {
+    S.buyItem(q, 'ammo762', 1);
+    S.useItem(q, 'ammo762');
+    return W.ammoCount(q, '762') === 30;
+  })());
+  ok('бронежилет надевается', (() => {
+    S.buyItem(q, 'armor', 1);
+    S.useItem(q, 'armor');
+    return q.armor === 50;
+  })());
+  ok('у игрока в сейве есть магазины и броня', (() => {
+    const np = S.createPlayer({});
+    return typeof np.mags === 'object' && typeof np.ammo === 'object' && np.armor === 0;
+  })());
+
+  const pl = read('www/js/entities/player.js');
+  const wm = read('www/js/entities/weaponmodels.js');
+  const mainJs2 = read('www/js/main.js');
+  ok('модели стволов собраны из деталей', W.WEAPON_IDS.every(id => wm.includes(`make${id[0].toUpperCase()}${id.slice(1)}`)));
+  ok('у длинных стволов приклад и цевьё', /приклад/.test(wm) && /цевь/.test(wm) && /FOREGRIP/.test(wm));
+  ok('двуручный хват в анимации', /weaponTwo/.test(pl));
+  ok('анимация перезарядки', /_poseReload/.test(pl) && /startReload/.test(pl));
+  ok('вспышка подсвечивает сцену', /flashLight/.test(wm) && /flashLight/.test(pl));
+  ok('автоогонь по удержанию кнопки', /setFiring/.test(mainJs2) && /setFiring/.test(read('www/js/ui/controls.js')));
+  ok('быстрый выбор ствола цифрами', /quickWeapon/.test(mainJs2));
+  ok('броня гасит урон', /p\.armor > 0/.test(mainJs2));
+  ok('при аресте изымают всё оружие', /inventory\.filter\(i => !WEAPONS\[i\.id\]\)/.test(mainJs2));
+  ok('в городе есть оружейный магазин', /guns/.test(read('www/js/world/city.js')) && /_assignSpecialShops/.test(read('www/js/world/city.js')));
+  ok('витрина оружейного с характеристиками', /_renderGunShop/.test(read('www/js/ui/panels.js')));
 });
 
 /* ======================= ИТОГ ======================= */

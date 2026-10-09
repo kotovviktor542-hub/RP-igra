@@ -421,19 +421,33 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     g.toggleAim(false);
     res.aimOff = !p3.aiming && document.getElementById('crosshair').classList.contains('hidden');
 
-    // оружие и отдача
-    g.player.equipped = 'pistol'; g.player.ammo = 5;
+    // оружие, магазин, отдача
+    g.player.equipped = 'pistol';
+    g.player.ammo = { '9mm': 24 }; g.player.mags = { pistol: 5 };
     g.syncWeapon();
     res.weaponInHand = !!p3.weapon && p3.weaponKind === 'pistol';
     g.toggleAim(true);
-    const before = g.player.ammo;
+    const before = g.player.mags.pistol;
     g.shoot();
     res.recoil = p3.recoilT > 0 && p3.camKick > 0;
-    res.ammoSpent = g.player.ammo === before - 1;
-    res.fireCooldown = (g.shoot(), g.player.ammo === before - 1);
-    g.player.ammo = 0;
+    res.ammoSpent = g.player.mags.pistol === before - 1;
+    res.fireCooldown = (g.shoot(), g.player.mags.pistol === before - 1);
+    // автомат: двуручный хват и очередь
+    g.player.equipped = 'rifle'; g.player.mags.rifle = 3; g.syncWeapon();
+    res.rifleTwoHands = p3.weaponTwo === true && p3.weaponKind === 'rifle';
+    p3.fireCd = 0; g.shoot();
+    res.rifleShot = g.player.mags.rifle === 2;
+    // перезарядка
+    g.player.equipped = 'pistol'; g.player.mags.pistol = 0; g.player.ammo['9mm'] = 20;
+    g.syncWeapon(); g.reload();
+    res.reloaded = g.player.mags.pistol === 12 && g.player.ammo['9mm'] === 8 && p3.reloading === true;
+    p3.reloadT = 0;
+    g.player.mags.pistol = 0; g.player.ammo['9mm'] = 0;
+    p3.fireCd = 0;
     g.shoot();
-    res.noAmmo = g.player.ammo === 0;
+    res.noAmmo = g.player.mags.pistol === 0;
+    res.ammoHud = !document.getElementById('hud-ammo').classList.contains('hidden')
+      && /\d+ \/ \d+/.test(document.getElementById('hud-ammo').textContent);
     g.player.equipped = null; g.syncWeapon();
     res.weaponRemoved = !p3.weapon;
     g.toggleAim(false);
@@ -495,6 +509,10 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   ok('выстрел тратит патрон', combat.ammoSpent === true);
   ok('между выстрелами есть задержка', combat.fireCooldown === true);
   ok('без патронов не стреляет', combat.noAmmo === true);
+  ok('автомат держат двумя руками', combat.rifleTwoHands === true);
+  ok('автомат стреляет', combat.rifleShot === true);
+  ok('перезарядка набивает магазин', combat.reloaded === true);
+  ok('в HUD видно патроны «в магазине / запас»', combat.ammoHud === true);
   ok('оружие убирается из руки', combat.weaponRemoved === true);
   ok('смелый NPC даёт сдачи', combat.npcFights === true);
   ok('NPC падает в нокаут', combat.npcDown === true);

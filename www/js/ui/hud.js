@@ -72,11 +72,8 @@ export class HUD {
       we.textContent = w ? '★'.repeat(w) : '';
       we.classList.toggle('hidden', w === 0);
     }
-    const ae = $('hud-ammo');
-    if (ae) {
-      ae.textContent = '🔫 ' + (extra.ammo || 0);
-      ae.classList.toggle('hidden', !extra.armed);
-    }
+    this.setAmmo(extra.ammoText, extra.armed);
+    this.setArmor(p.armor || 0);
 
     STATS.forEach(s => {
       const v = clamp(p.stats[s.id], 0, 100);
@@ -86,6 +83,22 @@ export class HUD {
     });
 
     $('mm-street').textContent = this.streetName(player.pos.x, player.pos.z);
+  }
+
+  /** Показывает патроны текущего ствола: «12 / 48». */
+  setAmmo(text, armed) {
+    const ae = $('hud-ammo');
+    if (!ae) return;
+    ae.textContent = '🔫 ' + (text || '0 / 0');
+    ae.classList.toggle('hidden', !armed);
+  }
+
+  /** Показывает броню, если она есть. */
+  setArmor(value) {
+    const el = $('hud-armor');
+    if (!el) return;
+    el.textContent = '🛡 ' + Math.round(value);
+    el.classList.toggle('hidden', !value);
   }
 
   streetName(x, z) {

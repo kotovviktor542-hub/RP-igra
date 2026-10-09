@@ -4,6 +4,7 @@
 import { ITEMS, JOBS, QUESTS, ECONOMY, DEALERSHIP } from '../game/content.js';
 import { VEHICLES, CAR_COLORS } from '../entities/vehicle.js';
 import * as S from '../game/state.js';
+import { WEAPONS, AMMO, ammoLabel } from '../game/weapons.js';
 import { fmtMoney, dist2D } from '../core/utils.js';
 
 const $ = id => document.getElementById(id);
@@ -122,6 +123,7 @@ export class Panels {
     if (it.repair) parts.push('ремонт авто');
     if (it.equip) parts.push('оружие');
     if (it.ammo) parts.push(`+${it.ammo} патронов`);
+    if (WEAPONS[it.id || '']) parts.push('ствол');
     return parts.length ? ' · ' + parts.join(', ') : '';
   }
 
@@ -129,13 +131,16 @@ export class Panels {
   render_shop(poi) {
     this._arg = poi;
     const p = this.game.player;
+    const kind = poi?.shopKind || 'market';
     this.title.textContent = poi ? poi.name : 'Магазин';
     const b = this.body;
     b.innerHTML = '';
 
+    if (kind === 'guns') { this._renderGunShop(poi, p); return; }
+
     b.appendChild(el('div', 'sec', `Наличные: ${fmtMoney(p.money)} · вес ${S.invWeight(p).toFixed(1)} кг`));
 
-    const list = S.shopCatalog(poi?.shopKind || 'market');
+    const list = S.shopCatalog(kind);
     list.forEach(it => {
       const row = el('div', 'row');
       const afford = p.money >= it.price;
@@ -151,6 +156,56 @@ export class Panels {
       row.appendChild(buy);
       b.appendChild(row);
     });
+  }
+
+  /** Оружейный магазин: продавец, характеристики стволов, покупка и продажа. */
+  _renderGunShop(poi, p) {
+    const b = this.body;
+    const seller = poi?.seller || 'Продавец Марк';
+    b.appendChild(el('div', 'sec',
+      `${seller}: «Лицензия? Ладно, не моё дело. Смотри товар.»<br>
+       Наличные: ${fmtMoney(p.money)} · вес ${S.invWeight(p).toFixed(1)} кг`));
+
+    b.appendChild(el('div', 'sec', 'Оружие'));
+    for (const id of ['pistol', 'revolver', 'shotgun', 'smg', 'rifle']) {
+      const w = WEAPONS[id];
+      const item = ITEMS[id];
+      const have = S.invCount(p, id);
+      const row = el('div', 'row');
+      const afford = p.money >= item.price;
+      if (!afford && !have) row.classList.add('locked');
+      row.innerHTML = `<div class="ic">🔫</div>
+        <div class="grow"><div class="t">${w.name}${have ? ' · есть' : ''}</div>
+        <div class="d">урон ${w.dmg}${w.pellets ? '×' + w.pellets : ''} · магазин ${w.mag} · ${AMMO[w.ammo].name} · ${w.auto ? 'очередь' : 'одиночный'}<br>${w.desc}</div></div>
+        <div class="price">${item.price} $</div>`;
+      const buy = el('button', 'btn sm primary', 'Купить');
+      buy.disabled = !afford || !S.canCarry(p, id, 1);
+      buy.onclick = () => this.game.buyItem(id, 1);
+      row.appendChild(buy);
+      if (have) {
+        const sell = el('button', 'btn sm', `Продать ${Math.round(item.price / 2)} $`);
+        sell.onclick = () => this.game.sellItem(id);
+        row.appendChild(sell);
+      }
+      b.appendChild(row);
+    }
+
+    b.appendChild(el('div', 'sec', 'Патроны и снаряжение'));
+    for (const id of ['ammo9', 'ammo357', 'ammo12', 'ammo762', 'armor', 'holster']) {
+      const item = ITEMS[id];
+      const row = el('div', 'row');
+      const afford = p.money >= item.price;
+      if (!afford) row.classList.add('locked');
+      row.innerHTML = `<div class="ic">${id === 'armor' ? '🛡' : id === 'holster' ? '🎒' : '📦'}</div>
+        <div class="grow"><div class="t">${item.name}</div>
+        <div class="d">${item.weight} кг${item.ammo ? ' · +' + item.ammo + ' патронов' : ''}${item.armor ? ' · +' + item.armor + ' брони' : ''}</div></div>
+        <div class="price">${item.price} $</div>`;
+      const buy = el('button', 'btn sm primary', 'Купить');
+      buy.disabled = !afford || !S.canCarry(p, id, 1);
+      buy.onclick = () => this.game.buyItem(id, 1);
+      row.appendChild(buy);
+      b.appendChild(row);
+    }
   }
 
   /* ======================= РАБОТЫ ======================= */
