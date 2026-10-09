@@ -372,6 +372,10 @@ export function questEvent(p, type, data = {}) {
       case 'buy_house':    match = true; break;
       case 'buy_vehicle':  match = true; break;
       case 'visit':        match = data.poi === step.poi; break;
+      case 'enter_interior': match = !step.kind || data.kind === step.kind; break;
+      case 'sleep':        match = true; break;
+      case 'shoot':        match = true; break;
+      case 'reload':       match = true; break;
       default: match = false;
     }
     if (!match) continue;

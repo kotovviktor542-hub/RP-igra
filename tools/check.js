@@ -680,6 +680,28 @@ group('Интерьеры, жильё и магазины', () => {
   ok('панели гардероба и сейфа есть', /render_wardrobe/.test(panelsJs) && /render_stash/.test(panelsJs));
 });
 
+group('Новые задания', () => {
+  const content = read('www/js/game/content.js');
+  ok('есть задание на оружие', /q_defend/.test(content));
+  ok('есть задание на жильё и сон', /q_nest/.test(content));
+  const p = S.createPlayer({});
+  p.money = 999999;
+  ok('цепочка «Самооборона» проходится', (() => {
+    S.buyItem(p, 'pistol', 1);
+    S.questEvent(p, 'buy_cat', { cat: 'weapon' });
+    S.questEvent(p, 'reload');
+    const fin = S.questEvent(p, 'shoot');
+    return fin.some(q => q.id === 'q_defend');
+  })());
+  ok('цепочка «Обжиться» проходится', (() => {
+    S.buyProperty(p, { type: 'apartment', id: 'zz', name: 'Квартира', x: 0, z: 0, price: 1000 });
+    S.questEvent(p, 'buy_house');
+    S.questEvent(p, 'enter_interior', { kind: 'home' });
+    const fin = S.questEvent(p, 'sleep');
+    return fin.some(q => q.id === 'q_nest');
+  })());
+});
+
 group('Машины, гараж и персонаж', () => {
   const veh = read('www/js/entities/vehicle.js');
   const pl2 = read('www/js/entities/player.js');

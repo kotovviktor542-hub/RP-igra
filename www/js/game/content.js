@@ -188,6 +188,30 @@ export const QUESTS = [
   }
 ];
 
+/* --- задания по новым системам --- */
+QUESTS.push(
+  {
+    id: 'q_defend', name: 'Самооборона',
+    desc: 'В городе неспокойно. Загляни в оружейный магазин и подготовься.',
+    steps: [
+      { id: 'buy_gun', text: 'Купить любое оружие', type: 'buy_cat', cat: 'weapon' },
+      { id: 'reload', text: 'Зарядить магазин', type: 'reload' },
+      { id: 'shoot', text: 'Сделать выстрел', type: 'shoot' }
+    ],
+    reward: { money: 400, rep: 4, xp: 30 }
+  },
+  {
+    id: 'q_nest', name: 'Обжиться',
+    desc: 'Квартира — это не только стены. Обустройся и выспись как человек.',
+    steps: [
+      { id: 'buy_flat', text: 'Купить жильё', type: 'buy_house' },
+      { id: 'go_home', text: 'Зайти домой', type: 'enter_interior', kind: 'home' },
+      { id: 'sleep', text: 'Поспать в своей кровати', type: 'sleep' }
+    ],
+    reward: { money: 1200, rep: 10, xp: 60 }
+  }
+);
+
 /* ======================= АВТОСАЛОН ======================= */
 export const DEALERSHIP = ['hatch', 'sedan', 'suv', 'pickup', 'van', 'sports', 'truck'];
 

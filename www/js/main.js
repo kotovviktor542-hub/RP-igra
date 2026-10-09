@@ -536,6 +536,7 @@ class Game {
         p.stats.thirst = Math.max(0, p.stats.thirst - 14);
         p.stats.health = Math.min(100, p.stats.health + 20);
         this.engine.time = (this.engine.time + 7) % 24;
+        S.questEvent(p, 'sleep');
         this.saveGame(false);
         this.dialog('Выспался', `Энергия +${Math.round(gain)}, здоровье +20. Наступило утро.`,
           [{ label: 'Отлично', fn: () => {} }]);
@@ -1079,6 +1080,7 @@ class Game {
     const r = reloadWeapon(p, wid);
     if (!r.ok) { this.hud.toast(r.reason, 'bad'); return; }
     p3.startReload(w.reloadTime);
+    S.questEvent(p, 'reload');
     this.hud.toast(`Перезарядка… ${w.name}`);
     setTimeout(() => {
       if (this.player === p) this.hud.toast(`${w.name}: ${ammoLabel(p, wid)}`, 'good');
@@ -1107,6 +1109,7 @@ class Game {
     }
     if (!p3.aiming) this.toggleAim(true);
     if (!p3.fire(w.rate, w.recoil)) return;
+    S.questEvent(p, 'shoot');
 
     this._weaponHud();
 
