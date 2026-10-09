@@ -16,6 +16,7 @@ import { getTex, flatColor } from '../core/textures.js';
 import { Humanoid } from '../entities/humanoid.js';
 import { makeWeaponMesh } from '../entities/weaponmodels.js';
 import { mergeGeometries } from '../../vendor/BufferGeometryUtils.js';
+import { FACTIONS } from '../game/factions.js';
 
 export const BASE = { x: -4200, z: -4200 };   // где строим комнаты
 const WALL_H = 3.0;
@@ -288,6 +289,7 @@ function shell(w, d, opts = {}) {
   const parts = new THREE.Group();
   const colliders = [];
   const floorMat = opts.floor === 'tile' ? texMat('tile', Math.max(w, d) / 2)
+    : opts.floor === 'concrete' ? texMat('concrete', Math.max(w, d) / 3)
     : opts.floor === 'carpet' ? texMat('carpet', Math.max(w, d) / 3)
       : texMat('parquet', Math.max(w, d) / 2.4);
   const wallMat = opts.wall === 'shop' ? plain(0xdfe2e4, 0.9) : texMat('wallpaper', Math.max(w, d) / 3);
@@ -387,6 +389,207 @@ function makeHome(big, rng) {
     parts, colliders, actions,
     spawn: { x: 0, z: d / 2 - 1.3, rot: Math.PI },
     exitAt: { x: 0, z: d / 2 - 0.9 }
+  };
+}
+
+/* ======================= МЕБЕЛЬ БАЗ ОРГАНИЗАЦИЙ ======================= */
+
+/** Ряд металлических шкафчиков для формы. */
+function lockerRow(x, z, ry, n = 4, accent = 0x2f6fb0) {
+  const g = new THREE.Group();
+  const body = plain(0x8d949c, 0.55, 0.5);
+  for (let i = 0; i < n; i++) {
+    const lx = (i - (n - 1) / 2) * 0.62;
+    g.add(box(0.58, 1.9, 0.5, lx, 0.95, 0, body));
+    g.add(box(0.5, 0.86, 0.04, lx, 1.36, 0.26, plain(accent, 0.5, 0.3)));
+    g.add(box(0.5, 0.86, 0.04, lx, 0.46, 0.26, plain(accent, 0.5, 0.3)));
+    g.add(cyl(0.025, 0.025, 0.14, lx + 0.2, 1.3, 0.3, plain(0x30343a, 0.4, 0.8), 8));
+  }
+  g.add(box(n * 0.62 + 0.06, 0.06, 0.56, 0, 1.93, 0, plain(0x6d747c, 0.6, 0.4)));
+  g.position.set(x, 0, z);
+  g.rotation.y = ry;
+  return g;
+}
+
+/** Стойка дежурного: тумба, столешница, монитор, лампа. */
+function dutyDesk(x, z, ry, accent = 0x2f6fb0) {
+  const g = new THREE.Group();
+  g.add(box(2.6, 1.05, 0.72, 0, 0.52, 0, plain(0x3a4049, 0.7)));
+  g.add(box(2.8, 0.08, 0.9, 0, 1.08, 0.02, plain(0x24282d, 0.4, 0.3)));
+  g.add(box(2.7, 0.22, 0.06, 0, 0.92, -0.37, plain(accent, 0.5, 0.35)));
+  // монитор
+  g.add(cyl(0.12, 0.16, 0.04, -0.7, 1.14, 0, plain(0x1c1f23, 0.5, 0.6), 10));
+  g.add(box(0.07, 0.3, 0.07, -0.7, 1.28, 0, plain(0x1c1f23, 0.5, 0.6)));
+  const scr = box(0.78, 0.46, 0.04, -0.7, 1.62, 0, glowMat(0x7fd4ff, 0.9));
+  scr.rotation.y = 0.25;
+  g.add(scr);
+  // рация и журнал
+  g.add(box(0.1, 0.22, 0.06, 0.45, 1.23, 0.05, plain(0x202327, 0.6)));
+  g.add(box(0.34, 0.03, 0.26, 0.9, 1.13, 0.0, plain(0xe8e4d8, 0.9)));
+  g.position.set(x, 0, z);
+  g.rotation.y = ry;
+  return g;
+}
+
+/** Оружейная витрина-стеллаж вдоль стены. */
+function armoryRack(x, z, ry, accent = 0x2f6fb0) {
+  const g = new THREE.Group();
+  const steel = plain(0x737a82, 0.5, 0.6);
+  g.add(box(2.8, 2.1, 0.44, 0, 1.05, 0, plain(0x30353b, 0.7)));
+  for (let i = 0; i < 3; i++) g.add(box(2.7, 0.05, 0.4, 0, 0.45 + i * 0.6, 0.02, steel));
+  const gl = box(2.74, 2.0, 0.03, 0, 1.08, 0.23, glass());
+  g.add(gl);
+  for (let i = 0; i < 4; i++) {
+    const w = box(0.9, 0.08, 0.1, -0.95 + (i % 2) * 1.0, 1.1 + Math.floor(i / 2) * 0.6, 0.0, plain(0x1d2024, 0.6, 0.3));
+    w.rotation.z = 0.06;
+    g.add(w);
+  }
+  g.add(box(2.8, 0.08, 0.5, 0, 2.14, 0, plain(accent, 0.5, 0.4)));
+  g.position.set(x, 0, z);
+  g.rotation.y = ry;
+  return g;
+}
+
+/** Доска объявлений / карта оперативной обстановки. */
+function briefBoard(x, z, ry, accent = 0x2f6fb0) {
+  const g = new THREE.Group();
+  g.add(box(2.4, 1.5, 0.08, 0, 1.75, 0, plain(0x2a2e34, 0.8)));
+  g.add(box(2.2, 1.3, 0.02, 0, 1.75, 0.06, plain(0xdad4c4, 0.9)));
+  for (let i = 0; i < 6; i++) {
+    const px = -0.85 + (i % 3) * 0.85, py = 1.45 + Math.floor(i / 3) * 0.5;
+    g.add(box(0.42, 0.3, 0.01, px, py, 0.08, plain(i % 2 ? 0xffffff : accent, 0.9)));
+  }
+  g.add(box(2.5, 0.1, 0.14, 0, 2.56, 0.02, plain(accent, 0.5, 0.4)));
+  g.position.set(x, 0, z);
+  g.rotation.y = ry;
+  return g;
+}
+
+/** Стол руководителя с креслом и флагом организации. */
+function chiefDesk(x, z, ry, accent = 0x2f6fb0) {
+  const g = new THREE.Group();
+  g.add(box(2.2, 0.72, 1.0, 0, 0.36, 0, plain(0x4a3524, 0.75)));
+  g.add(box(2.4, 0.08, 1.15, 0, 0.76, 0, plain(0x6b4a2f, 0.5)));
+  // кресло
+  g.add(box(0.62, 0.12, 0.6, 0, 0.47, -0.95, plain(0x24262a, 0.7)));
+  g.add(box(0.62, 0.8, 0.12, 0, 0.9, -1.2, plain(0x24262a, 0.7)));
+  g.add(cyl(0.05, 0.05, 0.42, 0, 0.21, -0.95, plain(0x3c3f45, 0.4, 0.7), 8));
+  g.add(cyl(0.3, 0.3, 0.05, 0, 0.03, -0.95, plain(0x3c3f45, 0.4, 0.7), 10));
+  // флаг
+  g.add(cyl(0.04, 0.04, 2.3, 1.5, 1.15, -0.6, plain(0x9aa0a8, 0.4, 0.8), 8));
+  const flag = box(0.06, 1.0, 0.7, 1.5, 1.7, -0.25, plain(accent, 0.8));
+  g.add(flag);
+  g.position.set(x, 0, z);
+  g.rotation.y = ry;
+  return g;
+}
+
+/** Тюремная камера: решётка, нары, раковина. */
+function cellBlock(x, z, ry) {
+  const g = new THREE.Group();
+  const bar = plain(0x6a7078, 0.45, 0.75);
+  for (let i = 0; i < 11; i++) g.add(cyl(0.035, 0.035, 2.6, -1.5 + i * 0.3, 1.3, 0, bar, 8));
+  g.add(box(3.2, 0.1, 0.1, 0, 2.6, 0, bar));
+  g.add(box(3.2, 0.1, 0.1, 0, 0.05, 0, bar));
+  // нары
+  g.add(box(1.9, 0.12, 0.72, -0.5, 0.5, -1.1, plain(0x5b6069, 0.6, 0.4)));
+  g.add(box(1.8, 0.14, 0.64, -0.5, 0.62, -1.1, plain(0x9a9484, 0.9)));
+  g.add(box(0.1, 0.5, 0.72, -1.45, 0.26, -1.1, plain(0x5b6069, 0.6, 0.4)));
+  g.add(box(0.1, 0.5, 0.72, 0.45, 0.26, -1.1, plain(0x5b6069, 0.6, 0.4)));
+  // раковина и ведро
+  g.add(box(0.44, 0.18, 0.34, 1.2, 0.85, -1.6, plain(0xd8dce0, 0.35)));
+  g.add(cyl(0.05, 0.05, 0.28, 1.2, 1.07, -1.72, plain(0x9aa0a8, 0.3, 0.8), 8));
+  g.position.set(x, 0, z);
+  g.rotation.y = ry;
+  return g;
+}
+
+/** Зал базы организации: дежурка, оружейка, шкафчики, доска, кабинет, сейф. */
+function makeBaseRoom(factionId, rng) {
+  const f = FACTIONS[factionId] || FACTIONS.police;
+  const accent = f.accent || 0x2f6fb0;
+  const gang = f.type === 'gang';
+  const w = 18, d = 13;
+  const { parts, colliders } = shell(w, d, { floor: gang ? 'concrete' : 'tile', wall: 'shop' });
+  const actions = [];
+
+  parts.add(ceilingLamp(-5, -3, gang ? 0xffc48a : 0xffffff, 1.0));
+  parts.add(ceilingLamp(5, -3, gang ? 0xffc48a : 0xffffff, 1.0));
+  parts.add(ceilingLamp(0, 3, 0xffffff, 0.85));
+
+  // дежурная часть
+  parts.add(dutyDesk(-w / 2 + 2.2, 3.2, Math.PI / 2, accent));
+  colliders.push({ x: -w / 2 + 2.2, z: 3.2, w: 1.0, d: 2.9 });
+  actions.push({ x: -w / 2 + 3.6, z: 3.2, r: 1.8, kind: 'orgduty', label: gang ? 'Сходка: взять дело' : 'Дежурная часть' });
+
+  // оружейная
+  parts.add(armoryRack(-3.5, -d / 2 + 0.35, 0, accent));
+  colliders.push({ x: -3.5, z: -d / 2 + 0.35, w: 2.9, d: 0.6 });
+  actions.push({ x: -3.5, z: -d / 2 + 1.5, r: 1.7, kind: 'orgarmory', label: gang ? 'Схрон со стволами' : 'Оружейная комната' });
+
+  // шкафчики с формой
+  parts.add(lockerRow(3.0, -d / 2 + 0.4, 0, 5, accent));
+  colliders.push({ x: 3.0, z: -d / 2 + 0.4, w: 3.2, d: 0.6 });
+  actions.push({ x: 3.0, z: -d / 2 + 1.5, r: 1.7, kind: 'orgwear', label: 'Переодеться в форму' });
+
+  // доска с заданиями
+  parts.add(briefBoard(-0.2, d / 2 - 0.3, Math.PI, accent));
+  actions.push({ x: -0.2, z: d / 2 - 1.5, r: 1.8, kind: 'orgboard', label: 'Доска: состав и задания' });
+
+  // кабинет руководителя
+  parts.add(chiefDesk(w / 2 - 3.0, -2.6, -Math.PI / 2, accent));
+  colliders.push({ x: w / 2 - 3.0, z: -2.6, w: 1.3, d: 2.4 });
+  actions.push({ x: w / 2 - 4.4, z: -2.6, r: 1.8, kind: 'orgchief', label: gang ? 'Кабинет главы' : 'Кабинет руководителя' });
+
+  // сейф-склад
+  parts.add(safeBox(w / 2 - 0.8, 2.6, -Math.PI / 2));
+  colliders.push({ x: w / 2 - 0.8, z: 2.6, w: 0.7, d: 0.8 });
+  actions.push({ x: w / 2 - 1.8, z: 2.6, r: 1.5, kind: 'orgstore', label: 'Склад организации' });
+
+  // совещательный стол в центре
+  parts.add(diningSet(0, -1.4, 0, 6));
+  colliders.push({ x: 0, z: -1.4, w: 1.8, d: 1.2 });
+
+  if (factionId === 'fsin') {
+    parts.add(cellBlock(-5.6, 1.0, 0));
+    parts.add(cellBlock(-1.6, 1.0, 0));
+    colliders.push({ x: -5.6, z: 1.0, w: 3.2, d: 0.3 });
+    colliders.push({ x: -1.6, z: 1.0, w: 3.2, d: 0.3 });
+    actions.push({ x: -3.6, z: 2.0, r: 2.0, kind: 'orgcells', label: 'Камеры: список заключённых' });
+  }
+
+  return {
+    parts, colliders, actions,
+    spawn: { x: 0, z: d / 2 - 1.4, rot: Math.PI },
+    exitAt: { x: 0, z: d / 2 - 0.9 }
+  };
+}
+
+/** Камера СИЗО, куда попадает осуждённый игрок. */
+function makePrisonRoom(rng) {
+  const w = 7, d = 6;
+  const { parts, colliders } = shell(w, d, { floor: 'concrete', wall: 'shop' });
+  const actions = [];
+  parts.add(ceilingLamp(0, 0, 0xcfd8e0, 0.7));
+
+  const bar = plain(0x6a7078, 0.45, 0.75);
+  for (let i = 0; i < 16; i++) parts.add(cyl(0.04, 0.04, 2.9, -2.6 + i * 0.35, 1.45, d / 2 - 0.5, bar, 8));
+  parts.add(box(6.0, 0.12, 0.12, 0, 2.9, d / 2 - 0.5, bar));
+  colliders.push({ x: 0, z: d / 2 - 0.5, w: 6.0, d: 0.3 });
+
+  parts.add(box(2.0, 0.14, 0.8, -w / 2 + 1.3, 0.52, -1.0, plain(0x5b6069, 0.6, 0.4)));
+  parts.add(box(1.9, 0.16, 0.72, -w / 2 + 1.3, 0.66, -1.0, plain(0x9a9484, 0.9)));
+  colliders.push({ x: -w / 2 + 1.3, z: -1.0, w: 2.0, d: 0.8 });
+  actions.push({ x: -w / 2 + 1.3, z: 0.2, r: 1.6, kind: 'jailbunk', label: 'Лечь на нары (ждать срок)' });
+
+  parts.add(box(0.5, 0.2, 0.4, w / 2 - 0.6, 0.85, -1.8, plain(0xd8dce0, 0.35)));
+  parts.add(box(0.7, 0.05, 0.7, w / 2 - 0.6, 0.78, 0.4, plain(0x7a8089, 0.5, 0.4)));
+  actions.push({ x: w / 2 - 1.6, z: 0.4, r: 1.6, kind: 'jailinfo', label: 'Срок, залог, адвокат' });
+
+  return {
+    parts, colliders, actions,
+    spawn: { x: 0, z: -2.0, rot: 0 },
+    exitAt: { x: 0, z: d / 2 - 1.2 }
   };
 }
 
@@ -517,11 +720,13 @@ export class Interiors {
    */
   enter(def) {
     if (this.current) this.exit();
-    const key = def.kind + ':' + (def.shopKind || '') + ':' + (def.big ? 'big' : 'small');
+    const key = def.kind + ':' + (def.shopKind || def.faction || '') + ':' + (def.big ? 'big' : 'small');
     let room = this._cache.get(key);
     if (!room) {
       const rng = () => this._rng();
       room = def.kind === 'shop' ? makeShopRoom(def.shopKind || 'market', rng)
+        : def.kind === 'base' ? makeBaseRoom(def.faction || 'police', rng)
+        : def.kind === 'prison' ? makePrisonRoom(rng)
         : makeHome(!!def.big, rng);
       room.parts = bakeRoom(room.parts);     // склейка ради кадров
       this._cache.set(key, room);

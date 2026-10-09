@@ -20,6 +20,7 @@ const { ITEMS, SHOP_STOCK, JOBS, QUESTS, ECONOMY, DEALERSHIP } =
   await import(path.join(WWW, 'js/game/content.js'));
 const S = await import(path.join(WWW, 'js/game/state.js'));
 const W = await import(path.join(WWW, 'js/game/weapons.js'));
+const F = await import(path.join(WWW, 'js/game/factions.js'));
 const { makeRNG, clamp, resolveCircleBoxes, scaleBoxUV, SpatialGrid, fmtMoney } =
   await import(path.join(WWW, 'js/core/utils.js'));
 
@@ -722,6 +723,122 @@ group('Машины, гараж и персонаж', () => {
 
   const { VEHICLES } = { VEHICLES: null };
   ok('в автосалоне разный транспорт', /DEALERSHIP/.test(read('www/js/game/content.js')));
+});
+
+group('Организации', () => {
+  const mainJs5 = read('www/js/main.js');
+  const panels3 = read('www/js/ui/panels.js');
+  const cityJs3 = read('www/js/world/city.js');
+  const intJs = read('www/js/world/interior.js');
+
+  ok('есть 7 госструктур и 4 ОПГ', F.STATE_FACTIONS.length === 7 && F.GANG_FACTIONS.length === 4);
+  ok('все нужные организации на месте',
+    ['sgb', 'gb', 'police', 'army', 'mchs', 'smi', 'fsin', 'china', 'moscow', 'skins', 'arzamas']
+      .every(id => !!F.FACTIONS[id]));
+  ok('у каждой 7 званий, транспорт, форма и обязанности',
+    F.FACTION_IDS.every(id => {
+      const f = F.FACTIONS[id];
+      return f.ranks.length === 7 && f.vehicles.length && f.uniform && f.duties.length;
+    }));
+  ok('оклад растёт со званием',
+    F.FACTION_IDS.every(id => {
+      const r = F.FACTIONS[id].ranks;
+      return r.every((x, i) => i === 0 || x.pay > r[i - 1].pay);
+    }));
+  ok('права руководства только у старших званий',
+    F.FACTION_IDS.every(id => {
+      const r = F.FACTIONS[id].ranks;
+      return !r[0].fire && !r[0].treasury && r[6].leader && r[6].fire;
+    }));
+
+  // полный цикл по каждой организации
+  let cycleFail = '';
+  for (const id of F.FACTION_IDS) {
+    const p = S.createPlayer('Тест', {});
+    p.level = 20; p.rep = 500; p.licenses = { drive: true, gun: true };
+    const j = F.joinFaction(p, id, { wanted: 0 });
+    if (!j.ok) { cycleFail = id + ': не берут — ' + j.reason; break; }
+    F.setDuty(p, true);
+    const before = p.money;
+    const pay = F.tickSalary(p, 2);
+    if (!(pay.paid > 0) || p.money <= before) { cycleFail = id + ': нет зарплаты'; break; }
+    const duty = F.availableDuties(p)[0];
+    if (!duty) { cycleFail = id + ': нет заданий'; break; }
+    const dres = F.completeDuty(p, duty.id);
+    if (!dres.ok) { cycleFail = id + ': задание не засчиталось'; break; }
+    const org = F.orgState(p, id);
+    if (!org.members.some(m => m.player)) { cycleFail = id + ': игрока нет в составе'; break; }
+    if (!org.log.length) { cycleFail = id + ': пустой журнал'; break; }
+    if (!F.canEnterZone(p, id)) { cycleFail = id + ': свой не проходит на базу'; break; }
+    const l = F.leaveFaction(p);
+    if (!l.ok || p.faction) { cycleFail = id + ': нельзя уволиться'; break; }
+  }
+  ok('каждая организация работает: приём, смена, зарплата, задание, журнал, уход' +
+    (cycleFail ? ' — ' + cycleFail : ''), !cycleFail);
+
+  ok('чужого на закрытую территорию не пускают', (() => {
+    const p = S.createPlayer('Чужой', {});
+    return !F.canEnterZone(p, 'army') && !F.canEnterZone(p, 'china');
+  })());
+
+  ok('повышение и понижение званий работает', (() => {
+    const p = S.createPlayer('Шеф', {});
+    p.level = 20; p.rep = 500; p.licenses = { drive: true };
+    F.joinFaction(p, 'police', { wanted: 0 });
+    p.faction.rank = 6;
+    const o = F.orgState(p, 'police');
+    const m = o.members.find(x => !x.player && x.rank < 5);
+    const was = m.rank;
+    const up = F.setMemberRank(p, 'police', m.name, 1);
+    const down = F.setMemberRank(p, 'police', m.name, -1);
+    return up.ok && down.ok && m.rank === was;
+  })());
+
+  ok('казна и склад организации работают', (() => {
+    const p = S.createPlayer('Казначей', {});
+    p.level = 20; p.rep = 500; p.licenses = { drive: true };
+    F.joinFaction(p, 'mchs', { wanted: 0 });
+    p.faction.rank = 6;
+    p.money = 5000;
+    const d = F.depositOrg(p, 'mchs', 1000);
+    const w = F.withdrawOrg(p, 'mchs', 500);
+    S.addItem(p, 'water', 2);
+    const put = F.orgStorePut(p, 'mchs', 'water', 1, S.invCount, S.removeItem);
+    const take = F.orgStoreTake(p, 'mchs', 'water', 1, S.addItem);
+    return d.ok && w.ok && put.ok && take.ok;
+  })());
+
+  ok('тюрьма: срок, залог и освобождение', (() => {
+    const p = S.createPlayer('Сиделец', {});
+    p.money = 100000;
+    F.jailPlayer(p, 5, 'разбой');
+    if (!p.jail || F.jailLeft(p) <= 0) return false;
+    const bail = F.payBail(p);
+    if (!bail.ok || p.jail) return false;
+    F.jailPlayer(p, 3, 'кража');
+    return F.paroleBy(p, 'fsin').ok && !p.jail;
+  })());
+
+  ok('у ОПГ считается влияние', (() => {
+    const p = S.createPlayer('Бандит', {});
+    F.addWarScore(p, 'china', 10);
+    const st = F.gangStandings(p);
+    return st.length === 4 && st[0].id === 'china';
+  })());
+
+  ok('базы построены в городе', /_blockFactionBase/.test(cityJs3)
+    && /type: 'base'/.test(cityJs3) && /type: 'prison'/.test(cityJs3));
+  ok('интерьер базы с оружейкой и шкафчиками',
+    /makeBaseRoom/.test(intJs) && /armoryRack/.test(intJs) && /lockerRow/.test(intJs) && /cellBlock/.test(intJs));
+  ok('меню организаций есть в панелях',
+    /render_factions/.test(panels3) && /render_org\(/.test(panels3) && /render_orgstore/.test(panels3));
+  ok('организации доступны из телефона', /Организации', 'factions'/.test(panels3));
+  ok('в игре есть смена, форма и служебный транспорт',
+    /toggleDuty/.test(mainJs5) && /wearUniform/.test(mainJs5) && /takeServiceVehicle/.test(mainJs5));
+  ok('задержание и отправка в СИЗО подключены',
+    /arrestNpc/.test(mainJs5) && /sendToJail/.test(mainJs5) && /releaseFromJail/.test(mainJs5));
+  ok('зарплата капает в апдейте', /_orgTick/.test(mainJs5) && /tickSalary/.test(mainJs5));
+  ok('сейв хранит организации', /faction/.test(read('www/js/game/state.js')) && /orgs/.test(read('www/js/game/state.js')));
 });
 
 /* ======================= ИТОГ ======================= */

@@ -20,6 +20,8 @@ import { Auth } from './net/auth.js';
 import { WEAPONS, AMMO, reload as reloadWeapon, fireShot, damageAt, ammoLabel, normalizeAmmo } from './game/weapons.js';
 import { RoomClient } from './net/room.js';
 import { Interiors } from './world/interior.js';
+import * as F from './game/factions.js';
+import { FACTIONS } from './game/factions.js';
 import { Controls } from './ui/controls.js';
 import { RadialMenu } from './ui/radial.js';
 import { preloadCharacters } from './entities/character.js';
@@ -487,6 +489,140 @@ class Game {
     this.panels.refresh();
   }
 
+  /* ======================= ОРГАНИЗАЦИИ ======================= */
+  joinFaction(id) {
+    const r = F.joinFaction(this.player, id, { wanted: this.wanted });
+    if (!r.ok) { this.hud.toast(r.reason, 'bad'); return; }
+    const f = F.FACTIONS[id];
+    this.hud.toast(`Принят в ${f.name}: ${F.rankName(id, 0)}`, 'good');
+    this.chat.add(`* Ты вступил в «${f.full}»`, 'sys');
+    this.wearUniform();
+    this.panels.open('org', id);
+    this.saveGame();
+  }
+
+  leaveFaction() {
+    const was = this.player.faction?.id;
+    const r = F.leaveFaction(this.player);
+    if (!r.ok) { this.hud.toast(r.reason, 'bad'); return; }
+    this.hud.toast('Ты уволился из организации');
+    this.chat.add(`* Ты покинул «${F.FACTIONS[was].name}»`, 'sys');
+    this.panels.open('factions');
+    this.saveGame();
+  }
+
+  toggleDuty() {
+    const p = this.player;
+    if (!p.faction) { this.hud.toast('Ты не в организации', 'bad'); return; }
+    const on = !F.onDuty(p);
+    F.setDuty(p, on);
+    const f = F.FACTIONS[p.faction.id];
+    if (on) {
+      this.wearUniform();
+      F.logAction(p, f.id, `${p.name} заступил на смену`);
+      this.hud.toast(`Смена начата · оклад ${F.myPerms(p).pay} $/мин`, 'good');
+    } else {
+      F.logAction(p, f.id, `${p.name} закончил смену`);
+      this.hud.toast('Смена закончена');
+      if (p.job && JOBS[p.job.id]?.faction) this.cancelJob();
+    }
+    this.panels.refresh();
+    this._weaponHud();
+  }
+
+  /** Надевает форму организации (меняет вид персонажа). */
+  wearUniform() {
+    const p = this.player;
+    if (!p.faction) { this.hud.toast('Формы нет: ты не в организации', 'bad'); return; }
+    const u = F.FACTIONS[p.faction.id].uniform;
+    p.look = { ...(p.look || {}), shirt: u.shirt, pants: u.pants };
+    p.uniform = p.faction.id;
+    this.applyLook();
+    this.hud.toast('Надета форма: ' + u.name, 'good');
+  }
+
+  /** Выдаёт служебную машину организации (бесплатно, пока на смене). */
+  takeServiceVehicle() {
+    const p = this.player;
+    if (!p.faction) { this.hud.toast('Ты не в организации', 'bad'); return; }
+    if (!F.onDuty(p)) { this.hud.toast('Сначала заступи на смену', 'bad'); return; }
+    const f = F.FACTIONS[p.faction.id];
+    const base = this.city.pois.find(x => x.type === 'base' && x.faction === f.id);
+    const p3 = this.player3d;
+    const near = base && dist2D(base.garage.x, base.garage.z, p3.pos.x, p3.pos.z) < 60;
+    const spot = near ? base.garage
+      : { x: p3.pos.x + Math.sin(p3.heading + 1.2) * 6, z: p3.pos.z + Math.cos(p3.heading + 1.2) * 6, rot: p3.heading };
+    if (this.serviceVehicle) {
+      this.scene.remove(this.serviceVehicle.mesh);
+      this.serviceVehicle.dispose();
+      this.worldVehicles = this.worldVehicles.filter(v => v !== this.serviceVehicle);
+    }
+    const type = f.vehicles[0];
+    const v = new Vehicle(type, f.color, spot.x, spot.z, spot.rot || 0);
+    v.plate = f.name.slice(0, 3).toUpperCase() + '-' + (100 + Math.floor(Math.random() * 899));
+    v.service = f.id;
+    this.scene.add(v.mesh);
+    this.worldVehicles.push(v);
+    this.serviceVehicle = v;
+    this.panels.close();
+    this.setWaypoint(v.pos.x, v.pos.z, 'Служебный транспорт');
+    this.hud.toast(`Служебный ${VEHICLES[type].name} подан`, 'good');
+  }
+
+  /** Руководитель набирает в штат NPC-кандидата. */
+  hireCandidate(id) {
+    const names = ['Антон Руднев', 'Вера Сойка', 'Паша Лом', 'Дима Корень', 'Соня Ветрова', 'Костя Лыков'];
+    const name = names[Math.floor(Math.random() * names.length)] + ' ' + (10 + Math.floor(Math.random() * 89));
+    const r = F.inviteMember(this.player, id, name);
+    this.hud.toast(r.ok ? `${name} принят в штат` : r.reason, r.ok ? 'good' : 'bad');
+    this.panels.refresh();
+  }
+
+  /** Полицейский/ГБ задерживает лежащего нарушителя. */
+  arrestNpc(npc) {
+    const p = this.player;
+    const canArrest = p.faction && ['police', 'gb', 'sgb', 'fsin'].includes(p.faction.id) && F.onDuty(p);
+    if (!canArrest) { this.hud.toast('Задерживать может только силовик на смене', 'bad'); return; }
+    const pay = 180 + Math.round(Math.random() * 120);
+    p.money += pay;
+    p.rep += 1;
+    F.orgState(p, p.faction.id).budget += Math.round(pay * 0.5);
+    F.logAction(p, p.faction.id, `${p.name} задержал нарушителя (${npc.name})`);
+    const idx = this.peds.list.indexOf(npc);
+    if (idx >= 0) this.peds._despawn(idx);
+    this.chat.add(`* ${npc.name} задержан и доставлен в ФСИН`, 'sys');
+    this.hud.toast(`Задержание оформлено: +${pay} $`, 'good');
+  }
+
+  /** Сажает игрока в тюрьму ФСИН. */
+  sendToJail(minutes, reason) {
+    const p = this.player;
+    F.jailPlayer(p, minutes, reason);
+    const prison = this.city.pois.find(x => x.type === 'prison');
+    if (this.player3d.vehicle) { this.player3d.exitVehicle(); this.controls.setDrivingMode(false); }
+    if (prison) this.player3d.teleport(prison.x, prison.z + 3, 0);
+    this.enterInterior({ kind: 'prison', id: 'prison', name: 'Камера №4', poi: prison });
+    this.chat.add(`* Приговор: ${minutes} мин. (${reason})`, 'sys');
+    this.hud.toast(`Ты в тюрьме: ${minutes} мин. Залог ${p.jail.bail} $`, 'bad');
+  }
+
+  /** Освобождение: по сроку, по залогу или досрочно от ФСИН. */
+  releaseFromJail(how = 'срок отбыт') {
+    const p = this.player;
+    if (!p.jail) return;
+    if (how === 'bail') {
+      const r = F.payBail(p);
+      if (!r.ok) { this.hud.toast(r.reason, 'bad'); return; }
+      this.hud.toast(`Залог ${r.paid} $ внесён — ты свободен`, 'good');
+    } else {
+      F.releasePlayer(p, how);
+      this.hud.toast('Ты вышел на свободу: ' + how, 'good');
+    }
+    if (this.interiors.active) this.leaveInterior();
+    this.wanted = 0;
+    this.saveGame();
+  }
+
   /* ======================= ВЗАИМОДЕЙСТВИЕ ======================= */
   /**
    * Заходим в помещение: прячем город, телепортируем игрока в комнату.
@@ -569,6 +705,63 @@ class Game {
           seller: this.interiors.sellerName });
         break;
       }
+      case 'orgduty': {
+        const fid = this.interiors.current?.def?.faction;
+        if (!F.isMember(p, fid)) { this.hud.toast('Дежурный смотрит мимо тебя', 'bad'); break; }
+        this.toggleDuty();
+        this.panels.open('org', fid);
+        break;
+      }
+      case 'orgarmory': {
+        const fid = this.interiors.current?.def?.faction;
+        if (!F.isMember(p, fid)) { this.hud.toast('Оружейка закрыта', 'bad'); break; }
+        if (!F.onDuty(p)) { this.hud.toast('Оружие выдают только на смене', 'bad'); break; }
+        this.panels.open('orgstore', fid);
+        break;
+      }
+      case 'orgwear': {
+        const fid = this.interiors.current?.def?.faction;
+        if (!F.isMember(p, fid)) { this.hud.toast('Это не твой шкафчик', 'bad'); break; }
+        this.wearUniform();
+        break;
+      }
+      case 'orgboard': {
+        const fid = this.interiors.current?.def?.faction;
+        this.panels.open(F.isMember(p, fid) ? 'org' : 'faction', fid);
+        break;
+      }
+      case 'orgchief': {
+        const fid = this.interiors.current?.def?.faction;
+        if (!F.isMember(p, fid)) { this.hud.toast('Руководитель тебя не ждёт', 'bad'); break; }
+        if (!F.myPerms(p).invite) { this.hud.toast('Кабинет открыт только руководству', 'bad'); break; }
+        this.panels.open('org', fid);
+        break;
+      }
+      case 'orgcells': {
+        const list = p.jail ? [`Ты сам: ${Math.ceil(F.jailLeft(p) / 60)} мин.`] : [];
+        this.dialog('Камеры СИЗО-1',
+          (list.length ? list.join('\n') : 'Сейчас в камерах тихо: заключённых нет.'),
+          [{ label: 'Понятно', cls: '' }]);
+        break;
+      }
+      case 'jailbunk': {
+        if (!p.jail) { this.hud.toast('Ты не заключённый'); break; }
+        const left = F.jailLeft(p);
+        if (left <= 0) { this.releaseFromJail('срок отбыт'); break; }
+        this.engine.time = (this.engine.time + 2) % 24;
+        p.stats.energy = Math.min(100, p.stats.energy + 25);
+        p.jail.until -= 60000;
+        this.hud.toast(`Поспал. До выхода ${Math.ceil(F.jailLeft(p) / 60)} мин.`);
+        break;
+      }
+      case 'jailinfo': {
+        if (!p.jail) { this.hud.toast('Ты свободен'); break; }
+        this.dialog('Исполнение наказания',
+          `Статья: ${p.jail.reason}\nСрок: ${p.jail.minutes} мин.\nОсталось: ${Math.ceil(F.jailLeft(p) / 60)} мин.\nЗалог: ${fmtMoney(p.jail.bail)}`,
+          [{ label: 'Внести залог', cls: 'primary', fn: () => this.releaseFromJail('bail') },
+           { label: 'Сидеть дальше', cls: '' }]);
+        break;
+      }
       default: this.hud.toast('Тут ничего не сделать');
     }
   }
@@ -615,7 +808,11 @@ class Game {
         ? 'Подъезд: ' + p.name : `Квартира ${p.name} — ${fmtMoney(p.price)}`],
       ['job', 6, x => x.type === 'job', p => 'Работа: ' + p.name],
       ['mall', 7, x => x.type === 'mall', () => 'Автосалон и магазины'],
-      ['cityhall', 8, x => x.type === 'cityhall', () => 'Мэрия — получить права']
+      ['cityhall', 8, x => x.type === 'cityhall', () => 'Мэрия — получить права'],
+      ['base', 7, x => x.type === 'base', pp => F.isMember(this.player, pp.faction)
+        ? 'Войти: ' + FACTIONS[pp.faction].name
+        : 'КПП ' + FACTIONS[pp.faction].name],
+      ['prison', 7, x => x.type === 'prison', () => 'СИЗО-1 ФСИН']
     ];
 
     for (const [kind, range, filter, label] of checks) {
@@ -785,6 +982,28 @@ class Game {
         ]);
         break;
       }
+      case 'base': {
+        const fid = it.data.faction;
+        if (F.isMember(p, fid) || F.canEnterZone(p, fid)) {
+          this.enterInterior({ kind: 'base', id: 'base_' + fid, name: FACTIONS[fid].name, poi: it.data, faction: fid });
+        } else {
+          this.hud.toast('Проход только для сотрудников', 'bad');
+          this.dialog(FACTIONS[fid].name,
+            `${FACTIONS[fid].full}\n\nТы не состоишь в организации. На проходной можно узнать условия приёма.`,
+            [{ label: 'Условия приёма', cls: 'primary', fn: () => this.panels.open('faction', fid) },
+             { label: 'Уйти', cls: '' }]);
+        }
+        break;
+      }
+      case 'prison': {
+        if (p.jail) { this.panels.open('org', 'fsin'); break; }
+        if (F.isMember(p, 'fsin')) {
+          this.enterInterior({ kind: 'base', id: 'base_fsin', name: 'СИЗО-1', poi: it.data, faction: 'fsin' });
+        } else {
+          this.dialog('СИЗО-1 ФСИН', 'Режимный объект. Посторонним вход воспрещён.', [{ label: 'Уйти', cls: '' }]);
+        }
+        break;
+      }
       case 'jobstop':
         this._completeStop();
         break;
@@ -871,7 +1090,8 @@ class Game {
   }
 
   _completeStop() {
-    const def = JOBS[this.player.job.id];
+    const jobId = this.player.job.id;
+    const def = JOBS[jobId];
     const r = S.completeStop(this.player);
     if (!r.ok) { this.hud.toast(r.reason, 'bad'); return; }
 
@@ -880,6 +1100,11 @@ class Game {
       this.hud.toast(`Смена закрыта: +${fmtMoney(r.total)}`, 'gold');
       this.chat.add(`Смена «${def.name}» завершена. Заработано ${fmtMoney(r.total)}`, 'money');
       S.questEvent(this.player, 'job_finish');
+      if (def.faction) {
+        const share = F.completeDuty(this.player, jobId);
+        if (share.ok) this.chat.add(`В казну организации переведено ${fmtMoney(share.bonus)}`, 'sys');
+        if (FACTIONS[this.player.faction.id].type === 'gang') F.addWarScore(this.player, this.player.faction.id, 3);
+      }
       this.waypoint = null;
       this.hud.setTracker(null);
       this.saveGame();
@@ -986,6 +1211,55 @@ class Game {
     if (p.stats.health <= 0) this._onDeath();
   }
 
+  /** Зарплата, срок в СИЗО и закрытые территории — раз в секунду. */
+  _orgTick(dt) {
+    const p = this.player;
+    this._orgAcc = (this._orgAcc || 0) + dt;
+    if (this._orgAcc < 1) return;
+    const sec = this._orgAcc;
+    this._orgAcc = 0;
+
+    // зарплата идёт из казны, пока игрок на смене
+    if (F.onDuty(p)) {
+      const r = F.tickSalary(p, sec / 60);
+      if (r && r.paid > 0 && (this._payMsg = (this._payMsg || 0) + r.paid) >= 50) {
+        this.hud.toast(`Зарплата: +${Math.round(this._payMsg)} $`, 'money');
+        this._payMsg = 0;
+      }
+      if (r && r.empty && !this._payWarn) {
+        this._payWarn = true;
+        this.chat.add('* В казне организации пусто — зарплату не начислили', 'sys');
+      }
+    }
+
+    // отбывание срока
+    if (p.jail) {
+      if (F.jailLeft(p) <= 0) this.releaseFromJail('срок отбыт');
+      else if (!this.interiors.active) {
+        // побег: розыск и возврат в камеру
+        this.addWanted(2, 'побег из-под стражи');
+        this.sendToJail(Math.max(3, p.jail.minutes), 'побег из СИЗО');
+      }
+    }
+
+    // закрытые территории организаций
+    if (!this.interiors.active && !p.jail) {
+      const p3 = this.player3d;
+      const base = this.city.pois.find(x => x.zone
+        && dist2D(x.zone.x, x.zone.z, p3.pos.x, p3.pos.z) < x.zone.r);
+      if (base && !F.canEnterZone(p, base.faction)) {
+        this._zoneWarn = (this._zoneWarn || 0) + 1;
+        if (this._zoneWarn === 1) {
+          this.hud.toast(`Закрытая территория: ${FACTIONS[base.faction].name}. Уходи!`, 'bad');
+        } else if (this._zoneWarn > 8) {
+          this._zoneWarn = 0;
+          if (FACTIONS[base.faction].type === 'state') this.addWanted(1, 'проникновение на режимный объект');
+          else { this.hurtPlayer(12, 'охрана базы'); this.hud.toast('Охрана выпроводила тебя силой', 'bad'); }
+        }
+      } else if (this._zoneWarn) this._zoneWarn = 0;
+    }
+  }
+
   /** Добавляет розыск. */
   addWanted(amount, reason) {
     const before = Math.floor(this.wanted);
@@ -1013,6 +1287,7 @@ class Game {
     const st = this.city.nearestPoi(this.player3d.pos.x, this.player3d.pos.z,
       x => x.type === 'police' || x.type === 'cityhall');
     if (st) this.player3d.teleport(st.poi.x, st.poi.z + 6, 0);
+    this._jailTerm = Math.max(2, Math.round(2 + fine / 400));
     this.player.equipped = null;
     normalizeAmmo(this.player);
     for (const k of Object.keys(this.player.ammo)) this.player.ammo[k] = 0;
@@ -1021,6 +1296,14 @@ class Game {
     this.syncWeapon();
     this.hud.toast(`Задержан. Штраф ${fine} $, оружие изъято`, 'bad');
     this.chat.add('* Тебя задержали', 'sys');
+    // силовиков своя служба отпускает, остальных — в СИЗО ФСИН
+    const own = p.faction && ['police', 'gb', 'sgb', 'fsin'].includes(p.faction.id);
+    if (own) {
+      this.chat.add('* Коллеги ограничились внушением', 'sys');
+    } else {
+      this.sendToJail(this._jailTerm, 'сопротивление полиции');
+    }
+    this.saveGame(false);
   }
 
   /** Кнопка атаки: с оружием в руках — выстрел, иначе удар кулаком. */
@@ -1354,6 +1637,7 @@ class Game {
     }
 
     if (this._fridgeCd > 0) this._fridgeCd -= dt;
+    this._orgTick(dt);
 
     // розыск: затухает, если какое-то время не нарушать
     if (this._hitMsgCd > 0) this._hitMsgCd -= dt;
@@ -1514,6 +1798,7 @@ class Game {
 /* ======================= СТАРТ ======================= */
 const game = new Game();
 window.__game = game;
+window.__factions = F;   // доступ из тестов
 
 game.boot().catch(err => {
   console.error(err);

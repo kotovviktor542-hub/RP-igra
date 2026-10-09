@@ -33,6 +33,10 @@ export function createPlayer(opts = {}) {
     vehicles: [],             // [{type, color, plate, x, z, rot, fuel, damage, stored}]
     properties: [],           // [{id, name, x, z, price, garage}]
 
+    faction: null,            // {id, rank, duty, joined} — организация игрока
+    orgs: {},                 // состояние организаций: казна, склад, состав, журнал
+    jail: null,               // {until, minutes, reason, bail}
+    criminal: false,          // судимость
     stash: {},                // id недвижимости -> [{id, qty}] (сейф/хранилище)
     worn: {},                 // слот одежды -> id предмета
     job: null,                // {id, stops:[{x,z,done}], current, earned}
@@ -448,6 +452,9 @@ export function load() {
     normalizeAmmo(d);          // старые сейвы: ammo было числом
     if (!d.stash || typeof d.stash !== 'object') d.stash = {};
     if (!d.worn || typeof d.worn !== 'object') d.worn = {};
+    if (!d.orgs || typeof d.orgs !== 'object') d.orgs = {};
+    if (d.faction && !d.faction.id) d.faction = null;
+    if (d.jail && (!d.jail.until || d.jail.until < Date.now())) d.jail = null;
     if (!Number.isFinite(d.armor)) d.armor = 0;
     if (d.equipped && !WEAPONS[d.equipped]) d.equipped = null;
     return d;

@@ -7,6 +7,7 @@ import { getTex, getFacade, getStorefront } from '../core/textures.js';
 import { makeRNG, boxAt, SpatialGrid } from '../core/utils.js';
 import { makeBuilding, makeHouse, makeGarage, makeWarehouse, FLOOR_H } from './buildings.js';
 import { PropSystem } from './props.js';
+import { FACTIONS } from '../game/factions.js';
 
 export const GRID = 11;          // кварталов по стороне
 export const CELL = 92;          // шаг сетки, м
@@ -70,6 +71,13 @@ function buildMaterials() {
 }
 
 /* ======================= ГОРОД ======================= */
+/** Куда ставить базы организаций: ячейка сетки (i,j) для каждой фракции. */
+const BASE_CELLS = [
+  ['police', 4, 7], ['gb', 7, 4], ['sgb', 3, 3], ['army', 9, 9],
+  ['mchs', 6, 8], ['smi', 5, 2], ['fsin', 1, 9],
+  ['china', 8, 1], ['moscow', 2, 6], ['skins', 9, 5], ['arzamas', 1, 2]
+];
+
 export class City {
   constructor(scene, seed = 20261007) {
     this.scene = scene;
@@ -135,6 +143,12 @@ export class City {
         }
       }
     });
+    // базы организаций занимают свои кварталы целиком
+    for (const [id, i, j] of BASE_CELLS) {
+      if (i === 2 && j === 2) continue;             // стартовый квартал не трогаем
+      this.districts[i][j] = 'base:' + id;
+    }
+
     // стартовый квартал игрока — всегда жилой с домами
     this.districts[2][2] = 'residential';
   }
@@ -401,6 +415,10 @@ export class City {
           case 'plaza':       this._blockPlaza(i, j, bx, bz, bw, bd); break;
           case 'gas':         this._blockGas(i, j, bx, bz, bw, bd); break;
           case 'civic':       this._blockCivic(i, j, bx, bz, bw, bd); break;
+          default:
+            if (typeof type === 'string' && type.startsWith('base:')) {
+              this._blockFactionBase(i, j, bx, bz, bw, bd, type.slice(5));
+            }
         }
         this._streetFurniture(i, j, x0, z0, x1, z1, type);
       }
@@ -813,6 +831,99 @@ export class City {
     }
     this.props.add('lightPoleTall', bx - w * 0.4, bz + bd * 0.32, 0);
     this.props.add('lightPoleTall', bx + w * 0.4, bz + bd * 0.32, 0);
+  }
+
+  /**
+   * База организации: главный корпус, пристройки, забор с воротами,
+   * служебная парковка, мачты освещения и опознавательные детали.
+   * Для армии — вышки и ангар, для ФСИН — глухая стена и вышки,
+   * для ОПГ — склад с контейнерами во дворе.
+   */
+  _blockFactionBase(i, j, bx, bz, bw, bd, id) {
+    const r = this.rng;
+    const f = FACTIONS[id];
+    if (!f) return;
+    const gang = f.type === 'gang';
+
+    // главный корпус
+    const w = bw * (gang ? 0.46 : 0.62);
+    const d = bd * (gang ? 0.34 : 0.4);
+    const hx = bx, hz = bz - bd * 0.14;
+    const floors = gang ? 2 : (id === 'army' || id === 'fsin' ? 2 : 4);
+    const b = makeBuilding({
+      rng: r, w, d, floors, x: hx, z: hz,
+      style: gang ? 'panel' : 'office',
+      facadeKey: 'f' + (gang ? 2 : 0),
+      shopKey: null, setbacks: !gang
+    });
+    this._emit(i, j, b.parts);
+    this._collide(hx, hz, w, d, b.height);
+
+    // пристройка-ангар / гараж техники
+    const gw = Math.min(bw * 0.3, 20), gd = Math.min(bd * 0.22, 14);
+    const gx = bx - bw * 0.3, gz = bz + bd * 0.22;
+    const wh = makeWarehouse({ rng: r, x: gx, z: gz, w: gw, d: gd, h: gang ? 5 : 7 });
+    this._emit(i, j, wh.parts);
+    this._collide(gx, gz, gw, gd, 7);
+
+    // забор по периметру участка с воротами со стороны дороги
+    const fx0 = bx - bw * 0.46, fx1 = bx + bw * 0.46;
+    const fz0 = bz - bd * 0.46, fz1 = bz + bd * 0.46;
+    const step = 4.0;
+    for (let x = fx0; x <= fx1; x += step) {
+      if (Math.abs(x - bx) < 6) continue;           // проём ворот
+      this.props.add('fence', x, fz1, 0);
+      this.props.add('fence', x, fz0, 0);
+    }
+    for (let z = fz0; z <= fz1; z += step) {
+      this.props.add('fence', fx0, z, Math.PI / 2);
+      this.props.add('fence', fx1, z, Math.PI / 2);
+    }
+
+    // вышки охраны у армии и ФСИН
+    if (id === 'army' || id === 'fsin') {
+      const parts = {};
+      for (const [tx, tz] of [[fx0 + 2, fz0 + 2], [fx1 - 2, fz0 + 2], [fx0 + 2, fz1 - 2], [fx1 - 2, fz1 - 2]]) {
+        (parts.concrete || (parts.concrete = [])).push(boxAt(2.0, 9, 2.0, tx, 4.5, tz, 3));
+        (parts.roof || (parts.roof = [])).push(boxAt(3.4, 0.5, 3.4, tx, 9.3, tz, 3));
+        (parts.glass || (parts.glass = [])).push(boxAt(2.6, 1.8, 2.6, tx, 8.3, tz, 0));
+      }
+      this._emit(i, j, parts);
+    }
+
+    // контейнеры и мусор во дворе у ОПГ
+    if (gang) {
+      for (let k = 0; k < 5; k++) {
+        this.props.add('container', bx + r.range(-bw * 0.3, bw * 0.3), bz + r.range(0, bd * 0.3), r.chance(0.5) ? 0 : Math.PI / 2);
+      }
+      for (let k = 0; k < 3; k++) this.props.add('bin', bx + r.range(-bw * 0.3, bw * 0.3), bz + r.range(-bd * 0.1, bd * 0.3), 0);
+    } else {
+      this.props.add('lightPoleTall', fx0 + 4, fz1 - 4, 0);
+      this.props.add('lightPoleTall', fx1 - 4, fz1 - 4, 0);
+      this.props.add('sign', bx - 5, fz1 - 1.5, 0);
+    }
+
+    // служебная парковка организации
+    const spots = [];
+    for (let k = 0; k < 6; k++) {
+      const sx = bx + bw * 0.18 + (k % 3) * 3.4;
+      const sz = bz + bd * 0.1 + Math.floor(k / 3) * 6;
+      spots.push({ x: sx, z: sz, rot: 0 });
+      this.parkingSpots.push({ x: sx, z: sz, rot: 0 });
+    }
+
+    const entryZ = hz + d / 2 + 4;
+    this.pois.push({
+      type: 'base', faction: id, name: 'База: ' + f.name,
+      x: hx, z: entryZ,
+      zone: { x: bx, z: bz, r: Math.max(bw, bd) * 0.5 },
+      garage: { x: gx, z: gz + gd / 2 + 3, rot: 0 },
+      spots
+    });
+    // тюрьма ФСИН — отдельная точка внутри базы
+    if (id === 'fsin') {
+      this.pois.push({ type: 'prison', faction: 'fsin', name: 'Городская тюрьма', x: hx + 8, z: entryZ });
+    }
   }
 
   /**

@@ -129,6 +129,21 @@ export const JOBS = {
   }
 };
 
+/* --- служебные задания организаций попадают в общий список работ --- */
+import { FACTIONS } from './factions.js';
+for (const f of Object.values(FACTIONS)) {
+  for (const d of f.duties) {
+    JOBS[d.id] = {
+      name: d.name, icon: f.type === 'gang' ? '💀' : '🛡',
+      desc: d.desc,
+      needVehicle: false, stops: d.stops,
+      payPerStop: d.pay, bonus: Math.round(d.pay * 1.4),
+      xp: d.xp || 12,
+      faction: f.id, minRank: d.rank || 0
+    };
+  }
+}
+
 /* ======================= ЗАДАНИЯ ======================= */
 export const QUESTS = [
   {

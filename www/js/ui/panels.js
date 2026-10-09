@@ -5,6 +5,7 @@ import { ITEMS, JOBS, QUESTS, ECONOMY, DEALERSHIP } from '../game/content.js';
 import { VEHICLES, CAR_COLORS } from '../entities/vehicle.js';
 import * as S from '../game/state.js';
 import { WEAPONS, AMMO, ammoLabel } from '../game/weapons.js';
+import * as F from '../game/factions.js';
 import { fmtMoney, dist2D } from '../core/utils.js';
 
 const $ = id => document.getElementById(id);
@@ -338,6 +339,12 @@ export class Panels {
 
     b.appendChild(el('div', 'sec', 'Доступные вакансии'));
     Object.entries(JOBS).forEach(([id, def]) => {
+      // служебные задания организаций видны только своим и только на дежурстве
+      if (def.faction) {
+        if (!F.isMember(p, def.faction)) return;
+        if (!F.onDuty(p)) return;
+        if ((def.minRank || 0) > F.myRank(p)) return;
+      }
       const row = el('div', 'row');
       const locked = (def.reqRep && p.rep < def.reqRep) ||
                      (def.reqLicense && !p.licenses[def.reqLicense]);
@@ -367,6 +374,253 @@ export class Panels {
     b.appendChild(st);
   }
 
+  /* ======================= ОРГАНИЗАЦИИ ======================= */
+  /** Общий каталог: описания, требования, ранги, состав, вступление. */
+  render_factions(arg) {
+    this._arg = arg;
+    const p = this.game.player;
+    this.title.textContent = 'Организации города';
+    const b = this.body;
+    b.innerHTML = '';
+
+    const mine = F.myFaction(p);
+    if (mine) {
+      const f = F.FACTIONS[mine.id];
+      const row = el('div', 'row active', `<div class="ic">🏛</div><div class="grow">
+        <div class="t">${f.name} · ${F.rankName(mine.id, mine.rank)}</div>
+        <div class="d">${F.onDuty(p) ? 'на дежурстве' : 'не на смене'} · зарплата ${F.rankPerms(mine.id, mine.rank).pay} $/мин</div></div>`);
+      const go = el('button', 'btn sm primary', 'Моя организация');
+      go.onclick = () => this.open('org', mine.id);
+      row.appendChild(go);
+      b.appendChild(row);
+    }
+
+    const section = (title, ids) => {
+      b.appendChild(el('div', 'sec', title));
+      ids.forEach(id => {
+        const f = F.FACTIONS[id];
+        const org = F.orgState(p, id);
+        const online = org.members.filter(m => m.online).length;
+        const row = el('div', 'row');
+        const req = f.req || {};
+        const reqText = [req.level ? `ур. ${req.level}+` : null,
+          req.rep ? `репутация ${req.rep}+` : null,
+          req.license ? 'права' : null,
+          req.clean ? 'без судимости' : null].filter(Boolean).join(' · ') || 'без требований';
+        row.innerHTML = `<div class="ic" style="color:#${f.accent.toString(16).padStart(6, '0')}">
+          ${f.type === 'state' ? '🛡' : '💀'}</div>
+          <div class="grow"><div class="t">${f.name}</div>
+          <div class="d">${f.desc}<br>Требования: ${reqText} · состав ${org.members.length}, в сети ${online}</div></div>`;
+        const info = el('button', 'btn sm', 'Подробнее');
+        info.onclick = () => this.open('faction', id);
+        row.appendChild(info);
+        b.appendChild(row);
+      });
+    };
+    section('Государственные структуры', F.STATE_FACTIONS);
+    section('Нелегальные группировки', F.GANG_FACTIONS);
+
+    b.appendChild(el('div', 'sec', 'Влияние группировок'));
+    F.gangStandings(p).forEach((g, i) => {
+      b.appendChild(el('div', 'kv', `<span>${i + 1}. ${g.name}</span><b>${g.war} очков</b>`));
+    });
+  }
+
+  /** Карточка организации: ранги, перки, состав, вступление. */
+  render_faction(id) {
+    this._arg = id;
+    const p = this.game.player;
+    const f = F.FACTIONS[id];
+    if (!f) { this.render_factions(); return; }
+    const org = F.orgState(p, id);
+    this.title.textContent = f.name;
+    const b = this.body;
+    b.innerHTML = '';
+
+    b.appendChild(el('div', 'sec', f.full));
+    b.appendChild(el('div', 'd', f.desc));
+
+    b.appendChild(el('div', 'sec', 'Звания и оклад'));
+    f.ranks.forEach((r, i) => {
+      const me = F.isMember(p, id) && F.myRank(p) === i;
+      const row = el('div', me ? 'row active' : 'row', `<div class="ic">${i + 1}</div>
+        <div class="grow"><div class="t">${r.name}${me ? ' — ты' : ''}</div>
+        <div class="d">${r.pay} $/мин${r.invite ? ' · приём' : ''}${r.fire ? ' · увольнение' : ''}${r.treasury ? ' · казна' : ''}${r.leader ? ' · руководитель' : ''}</div></div>`);
+      b.appendChild(row);
+    });
+
+    b.appendChild(el('div', 'sec', 'Возможности'));
+    b.appendChild(el('div', 'd', (f.perks || []).join(' · ')));
+    b.appendChild(el('div', 'sec', 'Транспорт и форма'));
+    b.appendChild(el('div', 'd', `${f.vehicles.map(v => VEHICLES[v]?.name || v).join(', ')} · ${f.uniform.name}`));
+
+    b.appendChild(el('div', 'sec', `Состав (${org.members.length})`));
+    org.members.slice().sort((a, c) => c.rank - a.rank).forEach(m => {
+      b.appendChild(el('div', 'kv',
+        `<span>${m.online ? '🟢' : '⚫'} ${m.name}${m.player ? ' (ты)' : ''}</span><b>${F.rankName(id, m.rank)}</b>`));
+    });
+
+    if (F.isMember(p, id)) {
+      const go = el('button', 'btn primary', 'Управление организацией');
+      go.onclick = () => this.open('org', id);
+      b.appendChild(go);
+    } else {
+      const check = F.canJoin(p, id, { wanted: this.game.wanted });
+      const join = el('button', 'btn primary', check.ok ? 'Подать заявление' : check.reason);
+      join.disabled = !check.ok;
+      join.onclick = () => this.game.joinFaction(id);
+      b.appendChild(join);
+    }
+    const back = el('button', 'btn', '← Ко всем организациям');
+    back.onclick = () => this.open('factions');
+    b.appendChild(back);
+  }
+
+  /** Моя организация: дежурство, казна, склад, кадры, журнал. */
+  render_org(id) {
+    const p = this.game.player;
+    const fid = id || p.faction?.id;
+    if (!fid || !F.isMember(p, fid)) { this.render_factions(); return; }
+    this._arg = fid;
+    const f = F.FACTIONS[fid];
+    const org = F.orgState(p, fid);
+    const perms = F.myPerms(p);
+    this.title.textContent = f.name;
+    const b = this.body;
+    b.innerHTML = '';
+
+    b.appendChild(el('div', 'sec', 'Я'));
+    b.appendChild(el('div', 'kv', `<span>Звание</span><b>${F.rankName(fid, F.myRank(p))}</b>`));
+    b.appendChild(el('div', 'kv', `<span>Оклад</span><b>${perms.pay} $/мин на смене</b>`));
+    b.appendChild(el('div', 'kv', `<span>Заданий выполнено</span><b>${p.faction.duties || 0}</b>`));
+    b.appendChild(el('div', 'kv', `<span>Получено зарплаты</span><b>${fmtMoney(Math.round(p.faction.salaryAcc || 0))}</b>`));
+
+    const duty = el('button', 'btn ' + (F.onDuty(p) ? 'danger' : 'primary'),
+      F.onDuty(p) ? '🔴 Закончить смену' : '🟢 Заступить на смену');
+    duty.onclick = () => this.game.toggleDuty();
+    b.appendChild(duty);
+
+    const uni = el('button', 'btn', '👕 Переодеться в форму');
+    uni.onclick = () => this.game.wearUniform();
+    b.appendChild(uni);
+
+    const car = el('button', 'btn', '🚓 Служебный транспорт');
+    car.onclick = () => this.game.takeServiceVehicle();
+    b.appendChild(car);
+
+    b.appendChild(el('div', 'sec', 'Служебные задания'));
+    const duties = F.availableDuties(p);
+    duties.forEach(d => {
+      const row = el('div', 'row', `<div class="ic">📋</div><div class="grow">
+        <div class="t">${d.name}</div><div class="d">${d.desc} · ${d.pay} $ за точку</div></div>`);
+      const go = el('button', 'btn sm primary', 'Взять');
+      go.disabled = !F.onDuty(p) || !!p.job;
+      go.onclick = () => this.game.startJob(d.id);
+      row.appendChild(go);
+      b.appendChild(row);
+    });
+    if (!F.onDuty(p)) b.appendChild(el('div', 'd', 'Задания доступны только на смене.'));
+
+    b.appendChild(el('div', 'sec', `Казна: ${fmtMoney(Math.round(org.budget))}`));
+    const amounts = [100, 1000, 10000];
+    const rowT = el('div', 'btn-row');
+    amounts.forEach(a => {
+      const dep = el('button', 'btn sm', `+${a}`);
+      dep.onclick = () => { const r = F.depositOrg(p, fid, a); this.game.hud.toast(r.ok ? `Внесено ${a} $` : r.reason, r.ok ? 'good' : 'bad'); this.refresh(); };
+      rowT.appendChild(dep);
+    });
+    if (perms.treasury) amounts.forEach(a => {
+      const w = el('button', 'btn sm danger', `−${a}`);
+      w.onclick = () => { const r = F.withdrawOrg(p, fid, a); this.game.hud.toast(r.ok ? `Снято ${a} $` : r.reason, r.ok ? 'good' : 'bad'); this.refresh(); };
+      rowT.appendChild(w);
+    });
+    b.appendChild(rowT);
+
+    const store = el('button', 'btn', '📦 Склад организации');
+    store.onclick = () => this.open('orgstore', fid);
+    b.appendChild(store);
+
+    b.appendChild(el('div', 'sec', `Состав (${org.members.length})`));
+    org.members.slice().sort((a, c) => c.rank - a.rank).forEach(m => {
+      const row = el('div', 'row', `<div class="ic">${m.online ? '🟢' : '⚫'}</div>
+        <div class="grow"><div class="t">${m.name}${m.player ? ' (ты)' : ''}</div>
+        <div class="d">${F.rankName(fid, m.rank)}</div></div>`);
+      if (perms.promote && !m.player) {
+        const up = el('button', 'btn sm', '▲');
+        up.onclick = () => { const r = F.setMemberRank(p, fid, m.name, 1); this.game.hud.toast(r.ok ? `${m.name}: ${r.name}` : r.reason, r.ok ? 'good' : 'bad'); this.refresh(); };
+        const down = el('button', 'btn sm', '▼');
+        down.onclick = () => { const r = F.setMemberRank(p, fid, m.name, -1); this.game.hud.toast(r.ok ? `${m.name}: ${r.name}` : r.reason, r.ok ? 'good' : 'bad'); this.refresh(); };
+        row.appendChild(up); row.appendChild(down);
+      }
+      if (perms.fire && !m.player) {
+        const fire = el('button', 'btn sm danger', '✕');
+        fire.onclick = () => { const r = F.fireMember(p, fid, m.name); this.game.hud.toast(r.ok ? `${m.name} уволен` : r.reason, r.ok ? 'good' : 'bad'); this.refresh(); };
+        row.appendChild(fire);
+      }
+      b.appendChild(row);
+    });
+    if (perms.invite) {
+      const hire = el('button', 'btn', '➕ Принять кандидата');
+      hire.onclick = () => this.game.hireCandidate(fid);
+      b.appendChild(hire);
+    }
+
+    b.appendChild(el('div', 'sec', 'Журнал действий'));
+    if (!org.log.length) b.appendChild(el('div', 'empty', 'Пока пусто.'));
+    org.log.slice(0, 12).forEach(l => {
+      const d = new Date(l.at);
+      b.appendChild(el('div', 'kv',
+        `<span>${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}</span><b style="font-weight:500">${l.text}</b>`));
+    });
+
+    const quit = el('button', 'btn danger', 'Уволиться по собственному');
+    quit.onclick = () => this.game.leaveFaction();
+    b.appendChild(quit);
+  }
+
+  render_orgstore(id) {
+    const p = this.game.player;
+    const fid = id || p.faction?.id;
+    if (!fid) { this.render_factions(); return; }
+    this._arg = fid;
+    const org = F.orgState(p, fid);
+    this.title.textContent = 'Склад: ' + F.FACTIONS[fid].name;
+    const b = this.body;
+    b.innerHTML = '';
+    const total = org.warehouse.reduce((s, i) => s + i.qty, 0);
+    b.appendChild(el('div', 'sec', `Занято ${total} / ${F.ORG_STORAGE_MAX}`));
+
+    if (!org.warehouse.length) b.appendChild(el('div', 'empty', 'Склад пуст. Сдай сюда снаряжение.'));
+    org.warehouse.forEach(e => {
+      const it = ITEMS[e.id];
+      const row = el('div', 'row', `<div class="ic">${CAT_ICON[it?.cat] || '•'}</div>
+        <div class="grow"><div class="t">${it?.name || e.id} ×${e.qty}</div></div>`);
+      const take = el('button', 'btn sm primary', 'Взять');
+      take.onclick = () => {
+        const r = F.orgStoreTake(p, fid, e.id, 1, S.addItem);
+        this.game.hud.toast(r.ok ? 'Получено: ' + (it?.name || e.id) : r.reason, r.ok ? 'good' : 'bad');
+        this.refresh();
+      };
+      row.appendChild(take);
+      b.appendChild(row);
+    });
+
+    b.appendChild(el('div', 'sec', 'Сдать со своего инвентаря'));
+    p.inventory.forEach(e => {
+      const it = ITEMS[e.id];
+      const row = el('div', 'row', `<div class="ic">${CAT_ICON[it?.cat] || '•'}</div>
+        <div class="grow"><div class="t">${it?.name || e.id} ×${e.qty}</div></div>`);
+      const put = el('button', 'btn sm', 'На склад');
+      put.onclick = () => {
+        const r = F.orgStorePut(p, fid, e.id, 1, S.invCount, S.removeItem);
+        this.game.hud.toast(r.ok ? 'Сдано на склад' : r.reason, r.ok ? 'good' : 'bad');
+        this.refresh();
+      };
+      row.appendChild(put);
+      b.appendChild(row);
+    });
+  }
+
   /* ======================= ТЕЛЕФОН / МЕНЮ ======================= */
   render_phone() {
     const p = this.game.player;
@@ -389,6 +643,7 @@ export class Panels {
     const nav = [
       ['🚗 Мой транспорт', 'vehicles'],
       ['🏠 Недвижимость', 'properties'],
+      ['🏛 Организации', 'factions'],
       ['🎯 Задания', 'quests'],
       ['🏦 Банк', 'bank'],
       ['🌐 Мультиплеер', 'servers'],
