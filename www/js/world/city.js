@@ -87,6 +87,7 @@ export class City {
     this.parkingSpots = [];
     this.pedPaths = [];      // точки для пешеходов
     this.bigMeshes = [];     // земля, дороги, разметка — для быстрого скрытия города
+    this.benches = [];       // {x,z,rot} — на них можно присесть
 
     Object.values(this.mats).forEach(m => { if (m.userData.night) this.nightMats.push(m); });
   }
@@ -425,7 +426,7 @@ export class City {
         if (s % 2 === 0) this.props.add('streetlight', x, z, e.rot + Math.PI);
         else if (r.chance(0.5) && type !== 'industrial') this.props.add('tree', x, z, r.range(0, 6.28), r.range(0.85, 1.25));
         if (r.chance(0.16)) this.props.add('bin', x + 2, z, 0);
-        if (r.chance(0.12) && type !== 'industrial') this.props.add('bench', x - 2.5, z, e.rot);
+        if (r.chance(0.12) && type !== 'industrial') this.addBench(x - 2.5, z, e.rot);
         if (r.chance(0.08)) this.props.add('hydrant', x + 3.5, z, 0);
       }
     });
@@ -646,7 +647,7 @@ export class City {
     }
     for (let k = 0; k < 8; k++) {
       const ang = (k / 8) * Math.PI * 2;
-      this.props.add('bench', bx + Math.cos(ang) * bw * 0.3, bz + Math.sin(ang) * bd * 0.3, -ang);
+      this.addBench(bx + Math.cos(ang) * bw * 0.3, bz + Math.sin(ang) * bd * 0.3, -ang);
       this.props.add('streetlight', bx + Math.cos(ang + 0.4) * bw * 0.36, bz + Math.sin(ang + 0.4) * bd * 0.36, 0);
     }
     this.pois.push({ type: 'park', name: 'Городской парк', x: bx, z: bz });
@@ -725,7 +726,7 @@ export class City {
 
     for (let k = 0; k < 10; k++) {
       const ang = (k / 10) * Math.PI * 2;
-      this.props.add('bench', bx + Math.cos(ang) * 11, bz + Math.sin(ang) * 11, -ang + Math.PI / 2);
+      this.addBench(bx + Math.cos(ang) * 11, bz + Math.sin(ang) * 11, -ang + Math.PI / 2);
       this.props.add('planter', bx + Math.cos(ang + 0.3) * 15, bz + Math.sin(ang + 0.3) * 15, 0);
     }
     this.props.add('atm', bx + bw * 0.35, bz, -Math.PI / 2);
@@ -894,6 +895,22 @@ export class City {
   /* ---------- рантайм ---------- */
 
   /** Выключает далёкие чанки — главный источник FPS на телефоне. */
+  /** Ставит скамейку и запоминает её — на скамейку можно присесть. */
+  addBench(x, z, rot) {
+    this.props.add('bench', x, z, rot);
+    this.benches.push({ x, z, rot });
+  }
+
+  /** Ближайшая скамейка в радиусе. */
+  nearestBench(x, z, maxDist = 3) {
+    let best = null, bd = maxDist;
+    for (const b of this.benches) {
+      const d = Math.hypot(b.x - x, b.z - z);
+      if (d < bd) { bd = d; best = b; }
+    }
+    return best ? { bench: best, dist: bd } : null;
+  }
+
   /** Прячет/показывает весь город целиком (используется при входе в помещение). */
   setVisible(on) {
     this.hidden = !on;

@@ -71,6 +71,7 @@ export class Player {
     this.reloadT = 0;         // таймер перезарядки
     this.reloadTotal = 0;
     this.weaponTwo = false;   // двуручный хват
+    this.sitting = false;     // сидит на скамейке
     this.camKick = 0;         // подброс камеры от выстрела
     this._flash = null;
   }
@@ -187,6 +188,56 @@ export class Player {
 
   get reloading() { return this.reloadT > 0; }
 
+  /**
+   * Сажает игрока на скамейку (или поднимает).
+   * @param {{x:number,z:number,rot:number}|null} seat
+   */
+  sit(seat) {
+    if (!seat) {
+      if (!this.sitting) return false;
+      this.sitting = false;
+      this.yOffset = 0;
+      return true;
+    }
+    if (this.mode === 'drive') return false;
+    this.sitting = true;
+    this.pos.set(seat.x, 0, seat.z);
+    this.heading = seat.rot;
+    this.yOffset = 0.42;                 // высота сиденья
+    this.root.position.set(seat.x, this.yOffset, seat.z);
+    this.root.rotation.y = seat.rot;
+    this.aiming = false;
+    return true;
+  }
+
+  /** Поза сидящего: ноги согнуты, корпус прямой. */
+  _poseSit() {
+    const b = this._legBones();
+    if (!b) return;
+    this.root.updateMatrixWorld(true);
+    this._aimBone(b.upLegR, b.legR, { x: 0.08, y: -0.25, z: 1 });
+    this._aimBone(b.upLegL, b.legL, { x: -0.08, y: -0.25, z: 1 });
+    this._aimBone(b.legR, b.footR || b.legR.children[0], { x: 0, y: -1, z: 0.12 });
+    this._aimBone(b.legL, b.footL || b.legL.children[0], { x: 0, y: -1, z: 0.12 });
+  }
+
+  _legBones() {
+    if (this._lbones !== undefined) return this._lbones;
+    if (!this.usingModel) { this._lbones = null; return null; }
+    const want = ['RightUpLeg', 'LeftUpLeg', 'RightLeg', 'LeftLeg', 'RightFoot', 'LeftFoot'];
+    const found = {};
+    this.root.traverse(o => {
+      const n = o.name || '';
+      for (const w of want) if (n.endsWith(w) && !found[w]) { found[w] = o; break; }
+    });
+    this._lbones = (found.RightUpLeg && found.LeftUpLeg) ? {
+      upLegR: found.RightUpLeg, upLegL: found.LeftUpLeg,
+      legR: found.RightLeg, legL: found.LeftLeg,
+      footR: found.RightFoot, footL: found.LeftFoot
+    } : null;
+    return this._lbones;
+  }
+
   /** Начинает удар. Возвращает false, если ещё перезарядка или игрок за рулём. */
   punch() {
     if (this.mode === 'drive' || this.punchCd > 0) return false;
@@ -255,6 +306,22 @@ export class Player {
     const mx = input.mx || 0;
     const my = input.my || 0;
     const mag = Math.min(1, Math.hypot(mx, my));
+
+    if (this.sitting) {
+      // любое движение или прыжок поднимают со скамейки
+      if (mag > 0.25 || input.jump) { this.sit(null); }
+      else {
+        this.speed = 0;
+        this.moveState = 'sit';
+        this.body.update(dt, 'sit', 0);
+        this.root.position.set(this.pos.x, this.yOffset, this.pos.z);
+        this.root.rotation.y = this.heading;
+        this._poseSit();
+        if (this.fireCd > 0) this.fireCd -= dt;
+        if (this.punchCd > 0) this.punchCd -= dt;
+        return;
+      }
+    }
 
     let wantSpeed = 0;
     if (mag > 0.08) {

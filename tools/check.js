@@ -680,6 +680,28 @@ group('Интерьеры, жильё и магазины', () => {
   ok('панели гардероба и сейфа есть', /render_wardrobe/.test(panelsJs) && /render_stash/.test(panelsJs));
 });
 
+group('Машины, гараж и персонаж', () => {
+  const veh = read('www/js/entities/vehicle.js');
+  const pl2 = read('www/js/entities/player.js');
+  const mainJs4 = read('www/js/main.js');
+  const cityJs2 = read('www/js/world/city.js');
+  const panels2 = read('www/js/ui/panels.js');
+
+  ok('у фар настоящий свет', /ensureHeadlights/.test(veh) && /SpotLight/.test(veh));
+  ok('фары включаются ночью сами', /nightAmount > 0\.35/.test(mainJs4));
+  ok('фары переключаются вручную', /toggleLights/.test(mainJs4) && /_manualLights/.test(mainJs4));
+  ok('машину можно убрать в гараж', /storeVehicle/.test(mainJs4) && /В гараж/.test(panels2));
+  ok('машина выезжает из гаража', /_garageSpot/.test(mainJs4));
+  ok('гараж доступен у своей недвижимости', /kind: 'garage'/.test(mainJs4));
+  ok('на скамейку можно сесть', /sit\(seat\)/.test(pl2) && /kind: 'bench'/.test(mainJs4));
+  ok('сидячая поза гнёт ноги', /_poseSit/.test(pl2) && /UpLeg/.test(pl2));
+  ok('скамейки учтены в городе', /nearestBench/.test(cityJs2) && /addBench/.test(cityJs2));
+  ok('прыжок есть', /input\.jump && this\.grounded/.test(pl2));
+
+  const { VEHICLES } = { VEHICLES: null };
+  ok('в автосалоне разный транспорт', /DEALERSHIP/.test(read('www/js/game/content.js')));
+});
+
 /* ======================= ИТОГ ======================= */
 console.log('\n────────────────────────────────');
 console.log(`Пройдено: \u001b[32m${pass}\u001b[0m   Провалено: ${fail ? '\u001b[31m' + fail + '\u001b[0m' : '0'}`);

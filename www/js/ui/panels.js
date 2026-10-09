@@ -438,6 +438,11 @@ export class Panels {
       const call = el('button', 'btn sm primary', spawned ? 'Найти' : 'Подать');
       call.onclick = () => this.game.summonVehicle(v.plate);
       acts.appendChild(call);
+      if (spawned) {
+        const store = el('button', 'btn sm', 'В гараж');
+        store.onclick = () => this.game.storeVehicle(v.plate);
+        acts.appendChild(store);
+      }
       const sell = el('button', 'btn sm danger', 'Продать');
       sell.onclick = () => this.game.sellVehicle(v.plate);
       acts.appendChild(sell);

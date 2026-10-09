@@ -483,6 +483,15 @@ export class Vehicle {
       w.rotation.y = w.userData.steer ? this.steer : 0;
     });
 
+    // настоящий свет фар (только у машины под управлением игрока — это дёшево)
+    if (this.headlights) {
+      const on = this.lightsOn ? 1 : 0;
+      this.headlights.forEach(l => {
+        l.intensity = on * 2.6;
+        l.visible = !!on;
+      });
+    }
+
     // свет
     const bm = this.mesh.userData.brakeMat;
     if (bm) bm.emissiveIntensity = this.braking ? 2.2 : (this.lightsOn ? 0.5 : 0);
@@ -499,6 +508,27 @@ export class Vehicle {
       x: this.pos.x + Math.cos(this.heading) * side,
       z: this.pos.z - Math.sin(this.heading) * side
     };
+  }
+
+  /**
+   * Вешает на машину два прожектора-фары. Зовётся только для авто игрока,
+   * чтобы не плодить источники света на весь трафик.
+   */
+  ensureHeadlights() {
+    if (this.headlights) return this.headlights;
+    const L = this.spec.L, W = this.spec.W;
+    this.headlights = [];
+    for (const side of [-1, 1]) {
+      const l = new THREE.SpotLight(0xfff0d0, 0, 55, 0.62, 0.45, 1.2);
+      l.position.set(side * W * 0.33, 0.72, L * 0.47);
+      l.target.position.set(side * W * 0.3, -0.4, L * 0.47 + 14);
+      l.castShadow = false;
+      l.visible = false;
+      this.mesh.add(l);
+      this.mesh.add(l.target);
+      this.headlights.push(l);
+    }
+    return this.headlights;
   }
 
   repair() { this.damage = 0; }

@@ -422,9 +422,12 @@ class Game {
     }
     const p = this.player3d.pos;
     const ang = this.player3d.heading;
-    const sx = p.x + Math.sin(ang + 1.2) * 6;
-    const sz = p.z + Math.cos(ang + 1.2) * 6;
-    const v = new Vehicle(rec.type, rec.color, sx, sz, ang + Math.PI / 2);
+    // если стоим у своего гаража — машина выезжает из него
+    const g = this._garageSpot && dist2D(this._garageSpot.x, this._garageSpot.z, p.x, p.z) < 10
+      ? this._garageSpot : null;
+    const sx = g ? g.x : p.x + Math.sin(ang + 1.2) * 6;
+    const sz = g ? g.z : p.z + Math.cos(ang + 1.2) * 6;
+    const v = new Vehicle(rec.type, rec.color, sx, sz, g ? (g.rot || 0) : ang + Math.PI / 2);
     v.plate = plate;
     v.fuel = rec.fuel;
     v.damage = rec.damage;
@@ -434,6 +437,28 @@ class Game {
     rec.stored = false;
     this.panels.close();
     this.hud.toast('Транспорт подан', 'good');
+  }
+
+  /** Убирает машину на хранение в гараж (с карты исчезает, топливо/урон сохраняются). */
+  storeVehicle(plate) {
+    const rec = this.player.vehicles.find(v => v.plate === plate);
+    if (!rec) return;
+    const live = this.worldVehicles.find(v => v.plate === plate);
+    if (live) {
+      if (this.player3d.vehicle === live) {
+        this.player3d.exitVehicle();
+        this.controls.setDrivingMode(false);
+        this.hud.showSpeedo(false);
+      }
+      rec.fuel = live.fuel; rec.damage = live.damage;
+      this.scene.remove(live.mesh);
+      live.dispose();
+      this.worldVehicles = this.worldVehicles.filter(v => v !== live);
+    }
+    rec.stored = true;
+    this.hud.toast('Машина в гараже', 'good');
+    this.panels.refresh();
+    this.saveGame();
   }
 
   buyVehicle(type) {
@@ -565,6 +590,8 @@ class Game {
       return { kind: 'exit', label: 'Выйти из машины' };
     }
 
+    if (p3.sitting) return { kind: 'stand', label: 'Встать' };
+
     // транспорт рядом
     let bestV = null, bd = 3.2;
     for (const v of this.worldVehicles) {
@@ -600,6 +627,17 @@ class Game {
 
     if (bestV) return { kind: 'enter', label: `Сесть: ${bestV.spec.name} (${bestV.plate})`, data: bestV };
 
+    // гараж собственного дома
+    for (const prop of this.player.properties) {
+      if (!prop.garage) continue;
+      if (dist2D(prop.garage.x, prop.garage.z, px, pz) < 6.5) {
+        return { kind: 'garage', label: 'Гараж: ' + prop.name, data: prop };
+      }
+    }
+
+    const bench = this.city.nearestBench(px, pz, 2.6);
+    if (bench) return { kind: 'bench', label: 'Присесть на скамейку', data: bench.bench };
+
     const npc = this.peds.nearest(px, pz, 2.8);
     if (npc) return { kind: 'npc', label: 'Поговорить: ' + npc.name, data: npc };
 
@@ -628,6 +666,8 @@ class Game {
     switch (it.kind) {
       case 'enter': {
         it.data.upgradeMesh(this.scene);
+        it.data.ensureHeadlights();
+        this._manualLights = false;
         this.player3d.enterVehicle(it.data);
         this.controls.setDrivingMode(true);
         this.hud.showSpeedo(true);
@@ -647,6 +687,26 @@ class Game {
         }
         break;
       }
+      case 'garage': {
+        this._garageSpot = it.data.garage;
+        this.panels.open('vehicles');
+        this.hud.toast('Гараж: можно подать машину или убрать её на хранение');
+        break;
+      }
+      case 'bench': {
+        const b = it.data;
+        // садимся на сиденье, а не в центр скамейки
+        const sx = b.x + Math.sin(b.rot) * 0.1;
+        const sz = b.z + Math.cos(b.rot) * 0.1;
+        this.player3d.sit({ x: sx, z: sz, rot: b.rot + Math.PI });
+        this.player.stats.energy = Math.min(100, this.player.stats.energy + 3);
+        this.hud.toast('Присел отдохнуть. Любое движение — встать');
+        break;
+      }
+      case 'stand':
+        this.player3d.sit(null);
+        this.hud.toast('Встал');
+        break;
       case 'shop':
         this.enterInterior({
           kind: 'shop', shopKind: it.data.shopKind || 'market',
@@ -1192,7 +1252,9 @@ class Game {
   toggleLights() {
     const v = this.player3d?.vehicle;
     if (!v) { this.hud.toast('Ты не в машине'); return; }
+    v.ensureHeadlights();
     v.lightsOn = !v.lightsOn;
+    this._manualLights = true;
     this.hud.toast(v.lightsOn ? 'Фары включены' : 'Фары выключены');
   }
 
@@ -1335,6 +1397,12 @@ class Game {
       ammoText: WEAPONS[p.equipped] ? ammoLabel(p, p.equipped) : '',
       armed: !!WEAPONS[p.equipped]
     });
+    // фары сами включаются в темноте
+    if (driving && !this._manualLights) {
+      p3.vehicle.ensureHeadlights();
+      p3.vehicle.lightsOn = eng.nightAmount > 0.35;
+    }
+
     this.hud.showSpeedo(driving);
     if (driving) {
       this.hud.drawSpeedo(p3.vehicle);
