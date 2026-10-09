@@ -86,6 +86,7 @@ export class City {
     this.roadEdges = [];
     this.parkingSpots = [];
     this.pedPaths = [];      // точки для пешеходов
+    this.bigMeshes = [];     // земля, дороги, разметка — для быстрого скрытия города
 
     Object.values(this.mats).forEach(m => { if (m.userData.night) this.nightMats.push(m); });
   }
@@ -151,6 +152,7 @@ export class City {
     mesh.position.y = -0.06;
     mesh.receiveShadow = true;
     this.scene.add(mesh);
+    this.bigMeshes.push(mesh);
     this.ground = mesh;
   }
 
@@ -266,18 +268,21 @@ export class City {
     }));
     roadMesh.receiveShadow = true;
     this.scene.add(roadMesh);
+    this.bigMeshes.push(roadMesh);
 
     const walkMesh = new THREE.Mesh(mergeGeometries(walkGeos), new THREE.MeshStandardMaterial({
       map: side.map, normalMap: side.normalMap, roughness: 0.88
     }));
     walkMesh.receiveShadow = true;
     this.scene.add(walkMesh);
+    this.bigMeshes.push(walkMesh);
 
     const markMesh = new THREE.Mesh(mergeGeometries(markGeos), new THREE.MeshStandardMaterial({
       color: 0xe8e4d8, roughness: 0.75
     }));
     markMesh.receiveShadow = false;
     this.scene.add(markMesh);
+    this.bigMeshes.push(markMesh);
 
     this.roadMesh = roadMesh;
   }
@@ -488,14 +493,29 @@ export class City {
         const d = side.horiz ? depth : seg - 1.2;
         const floors = r.int(3, 8);
         const shop = r.chance(0.72) ? 'shop' + r.int(0, 6) : null;
+        const style = r.pick(['office', 'residential', 'panel']);
         const b = makeBuilding({
           rng: r, w, d, floors, x, z,
-          style: r.pick(['office', 'residential', 'panel']),
+          style,
           facadeKey: 'f' + r.int(0, 5),
           shopKey: shop, balconies: r.chance(0.5)
         });
         this._emit(i, j, b.parts);
         this._collide(x, z, w, d, b.height);
+        // в жилом доме есть подъезд: можно купить квартиру
+        if (style !== 'office' && r.chance(0.55)) {
+          const dx = side.horiz ? 0 : (side.cx < bx ? -1 : 1) * (depth / 2 + 2.2);
+          const dz = side.horiz ? (side.cz < bz ? -1 : 1) * (depth / 2 + 2.2) : 0;
+          const flat = r.int(1, floors * 4);
+          this.pois.push({
+            type: 'apartment',
+            name: `Квартира №${flat}`,
+            x: x + dx, z: z + dz,
+            floor: Math.max(1, Math.ceil(flat / 4)),
+            price: 18000 + Math.round(r.range(0, 52000) / 500) * 500,
+            id: `a${i}_${j}_${Math.round(x)}_${Math.round(z)}`
+          });
+        }
         if (shop) {
           const ox = side.horiz ? 0 : (side.cx < bx ? -1 : 1) * (depth / 2 + 2.5);
           const oz = side.horiz ? (side.cz < bz ? -1 : 1) * (depth / 2 + 2.5) : 0;
@@ -874,7 +894,16 @@ export class City {
   /* ---------- рантайм ---------- */
 
   /** Выключает далёкие чанки — главный источник FPS на телефоне. */
+  /** Прячет/показывает весь город целиком (используется при входе в помещение). */
+  setVisible(on) {
+    this.hidden = !on;
+    this.bigMeshes.forEach(m => { m.visible = on; });
+    this.chunks.forEach(g => { g.visible = on; });   // дистанционное отсечение вернёт своё на первом же кадре
+    this.props.setVisible(on);
+  }
+
   updateCulling(px, pz, radius) {
+    if (this.hidden) return;
     this.chunks.forEach(grp => {
       const dx = grp.userData.cx - px;
       const dz = grp.userData.cz - pz;

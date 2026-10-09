@@ -19,6 +19,7 @@ import { OnlineScreen } from './ui/online.js';
 import { Auth } from './net/auth.js';
 import { WEAPONS, AMMO, reload as reloadWeapon, fireShot, damageAt, ammoLabel, normalizeAmmo } from './game/weapons.js';
 import { RoomClient } from './net/room.js';
+import { Interiors } from './world/interior.js';
 import { Controls } from './ui/controls.js';
 import { RadialMenu } from './ui/radial.js';
 import { preloadCharacters } from './entities/character.js';
@@ -128,6 +129,7 @@ class Game {
     this.auth = new Auth();
     this.pendingServer = null;      // {url, name} — куда заходим после создания персонажа
 
+    this.interiors = new Interiors(this);
     this.creator = new Creator(
       data => this.startNewGame(data),
       () => $('menu').classList.remove('hidden')
@@ -461,9 +463,98 @@ class Game {
   }
 
   /* ======================= ВЗАИМОДЕЙСТВИЕ ======================= */
+  /**
+   * Заходим в помещение: прячем город, телепортируем игрока в комнату.
+   * @param {object} def {kind:'home'|'shop', shopKind, name, poi, big}
+   */
+  enterInterior(def) {
+    const p3 = this.player3d;
+    if (p3.vehicle) { this.hud.toast('Сначала выйди из машины', 'bad'); return; }
+    this._outsidePos = { x: p3.pos.x, z: p3.pos.z, rot: p3.heading };
+    const r = this.interiors.enter(def);
+    // снаружи ничего не рисуем, пока мы внутри
+    this.city.setVisible(false);
+    this.worldVehicles.forEach(v => { v.mesh.visible = false; });
+    this.peds.list.forEach(n => { n.h.root.visible = false; });
+    this.police.list.forEach(c => { c.h.root.visible = false; });
+    p3.teleport(r.spawn.x, r.spawn.z, r.spawn.rot);
+    p3.camTargetDist = 3.4;
+    this.insideName = def.name || 'Помещение';
+    this.hud.toast('Вошёл: ' + this.insideName);
+    if (def.kind === 'home') this.chat.add(`* Ты дома: ${this.insideName}`, 'sys');
+    S.questEvent(this.player, 'enter_interior', { kind: def.kind });
+  }
+
+  /** Выходим на улицу: возвращаем город и игрока к двери. */
+  leaveInterior() {
+    const res = this.interiors.exit();
+    this.city.setVisible(true);
+    this.worldVehicles.forEach(v => { v.mesh.visible = true; });
+    this.peds.list.forEach(n => { n.h.root.visible = true; });
+    this.police.list.forEach(c => { c.h.root.visible = true; });
+    const o = this._outsidePos;
+    if (o) this.player3d.teleport(o.x, o.z, o.rot);
+    this.player3d.camTargetDist = 5.2;
+    this.insideName = null;
+    if (res) this.hud.toast('Снаружи');
+  }
+
+  /** Действия внутри помещения. */
+  _doIndoor(it) {
+    const p = this.player;
+    switch (it.kind) {
+      case 'leave': this.leaveInterior(); break;
+      case 'bed': {
+        const gain = Math.min(100 - p.stats.energy, 65);
+        p.stats.energy = Math.min(100, p.stats.energy + 65);
+        p.stats.hunger = Math.max(0, p.stats.hunger - 12);
+        p.stats.thirst = Math.max(0, p.stats.thirst - 14);
+        p.stats.health = Math.min(100, p.stats.health + 20);
+        this.engine.time = (this.engine.time + 7) % 24;
+        this.saveGame(false);
+        this.dialog('Выспался', `Энергия +${Math.round(gain)}, здоровье +20. Наступило утро.`,
+          [{ label: 'Отлично', fn: () => {} }]);
+        break;
+      }
+      case 'wardrobe':
+        this.panels.open('wardrobe');
+        break;
+      case 'stash':
+        this.panels.open('stash', this.interiors.current?.def?.id || 'home');
+        break;
+      case 'tv':
+        p.stats.energy = Math.min(100, p.stats.energy + 4);
+        this.hud.toast('Посмотрел новости: в городе снова стреляют');
+        this.chat.add('* По телевизору: сводка происшествий', 'sys');
+        break;
+      case 'fridge': {
+        if (this._fridgeCd > 0) { this.hud.toast('В холодильнике пусто, загляни позже'); break; }
+        this._fridgeCd = 180;
+        const pick = Math.random() < 0.5 ? 'sandwich' : 'water';
+        const r = S.addItem(p, pick, 1);
+        this.hud.toast(r.ok ? 'Взял из холодильника: ' + ITEMS[pick].name : r.reason, r.ok ? 'good' : 'bad');
+        break;
+      }
+      case 'shelf':
+      case 'fridgecase':
+      case 'cashier': {
+        const def = this.interiors.current?.def;
+        this.panels.open('shop', { name: def?.name || 'Магазин', shopKind: def?.shopKind || 'market',
+          seller: this.interiors.sellerName });
+        break;
+      }
+      default: this.hud.toast('Тут ничего не сделать');
+    }
+  }
+
   _findInteraction() {
     const p3 = this.player3d;
     const px = p3.pos.x, pz = p3.pos.z;
+
+    if (this.interiors.active) {
+      const a = this.interiors.nearestAction(px, pz);
+      return a ? { kind: 'indoor', label: a.label, data: a } : null;
+    }
 
     if (p3.mode === 'drive') {
       // в машине — проверяем точку смены и заправку
@@ -491,7 +582,9 @@ class Game {
       ['atm', 3.5, x => x.type === 'atm', () => 'Банкомат'],
       ['hospital_heal', 7, x => x.type === 'hospital_heal', () => 'Лечение — 350 $'],
       ['house', 6, x => x.type === 'house', p => S.ownsProperty(this.player, p.id)
-        ? 'Твой дом: ' + p.name : `Купить ${p.name} — ${fmtMoney(p.price)}`],
+        ? 'Войти домой: ' + p.name : `Купить ${p.name} — ${fmtMoney(p.price)}`],
+      ['apartment', 5, x => x.type === 'apartment', p => S.ownsProperty(this.player, p.id)
+        ? 'Подъезд: ' + p.name : `Квартира ${p.name} — ${fmtMoney(p.price)}`],
       ['job', 6, x => x.type === 'job', p => 'Работа: ' + p.name],
       ['mall', 7, x => x.type === 'mall', () => 'Автосалон и магазины'],
       ['cityhall', 8, x => x.type === 'cityhall', () => 'Мэрия — получить права']
@@ -531,6 +624,7 @@ class Game {
 
   _doInteraction(it) {
     const p = this.player;
+    if (it.kind === 'indoor') { this._doIndoor(it.data); return; }
     switch (it.kind) {
       case 'enter': {
         it.data.upgradeMesh(this.scene);
@@ -554,7 +648,10 @@ class Game {
         break;
       }
       case 'shop':
-        this.panels.open('shop', it.data);
+        this.enterInterior({
+          kind: 'shop', shopKind: it.data.shopKind || 'market',
+          name: it.data.name, poi: it.data, id: 'shop_' + (it.data.shopKind || 'market')
+        });
         break;
       case 'mall':
         this.panels.open('dealership');
@@ -573,19 +670,16 @@ class Game {
         this.hud.toast('Подлечили. −' + ECONOMY.hospitalFee + ' $', 'good');
         break;
       }
-      case 'house': {
+      case 'house': case 'apartment': {
+        const isFlat = it.kind === 'apartment';
         if (S.ownsProperty(p, it.data.id)) {
-          this.dialog(it.data.name, 'Твоя собственность.\nЗдесь можно отдохнуть и восстановить силы.', [
-            { label: 'Отдохнуть (+энергия)', cls: 'good', fn: () => {
-              p.stats.energy = 100;
-              p.stats.health = Math.min(100, p.stats.health + 25);
-              this.engine.time = (this.engine.time + 8) % 24;
-              this.hud.toast('Выспался. Энергия восстановлена', 'good');
-            } },
-            { label: 'Закрыть', cls: '' }
-          ]);
+          this.enterInterior({
+            kind: 'home', big: !isFlat, id: it.data.id,
+            name: it.data.name, poi: it.data
+          });
         } else {
-          this.dialog(it.data.name, `Дом с гаражом.\nЦена: ${fmtMoney(it.data.price)}\nУ тебя: ${fmtMoney(p.money)}`, [
+          this.dialog(it.data.name,
+            `${isFlat ? 'Квартира в доме' : 'Дом с гаражом'}.\nЦена: ${fmtMoney(it.data.price)}\nУ тебя: ${fmtMoney(p.money)}\n\nВнутри: спальня, кухня, гардероб и личный сейф.`, [
             { label: 'Купить', cls: 'primary', fn: () => {
               const r = S.buyProperty(p, it.data);
               if (!r.ok) { this.hud.toast(r.reason, 'bad'); return; }
@@ -593,6 +687,11 @@ class Game {
               this.chat.add(`Вы купили ${it.data.name} за ${fmtMoney(it.data.price)}`, 'money');
               S.questEvent(p, 'buy_house');
               this.saveGame();
+              this.enterInterior({ kind: 'home', big: !isFlat, id: it.data.id, name: it.data.name, poi: it.data });
+            } },
+            { label: isFlat ? 'Осмотреть' : 'Осмотреть дом', cls: '', fn: () => {
+              this.enterInterior({ kind: 'home', big: !isFlat, id: 'view_' + it.data.id,
+                name: it.data.name + ' (осмотр)', poi: it.data });
             } },
             { label: 'Отмена', cls: '' }
           ]);
@@ -888,6 +987,19 @@ class Game {
     this.hud.toast(p.equipped ? `В руках: ${WEAPONS[id].name} · ${ammoLabel(p, id)}` : 'Убрал оружие');
   }
 
+  /** Применяет внешность (цвет одежды из гардероба) к модели игрока. */
+  applyLook() {
+    const p = this.player;
+    if (!p || !this.player3d) return;
+    const worn = p.worn || {};
+    const look = { ...(p.look || {}) };
+    if (worn.shirt) look.shirtItem = worn.shirt;
+    if (worn.pants) look.pantsItem = worn.pants;
+    p.look = look;
+    this.player3d.setLook(look);
+    this.syncWeapon();
+  }
+
   /** Обновляет индикатор патронов и кнопку перезарядки. */
   _weaponHud() {
     const p = this.player;
@@ -1158,18 +1270,25 @@ class Game {
       this._jumpLatch = false;
     }
 
-    p3.update(dt, input, this.city);
+    p3.update(dt, input, this.interiors.active ? this.interiors : this.city);
 
     // мир
     eng.updateDayNight(dt, p3.pos);
-    this.city.updateCulling(p3.pos.x, p3.pos.z, eng.quality.chunkR);
-    this.city.setNight(eng.nightAmount);
+    if (this.interiors.active) {
+      // внутри помещения город выключен: и логично, и кадры экономит
+      this.interiors.update(dt);
+    } else {
+      this.city.updateCulling(p3.pos.x, p3.pos.z, eng.quality.chunkR);
+      this.city.setNight(eng.nightAmount);
 
-    this._streamParked(p3.pos.x, p3.pos.z);
-    this.traffic.update(dt, p3.pos.x, p3.pos.z, p3.vehicle, eng.nightAmount);
-    this.peds.update(dt, p3.pos.x, p3.pos.z, {
-      onHitPlayer: (n, dmg) => this.hurtPlayer(dmg, n.name)
-    });
+      this._streamParked(p3.pos.x, p3.pos.z);
+      this.traffic.update(dt, p3.pos.x, p3.pos.z, p3.vehicle, eng.nightAmount);
+      this.peds.update(dt, p3.pos.x, p3.pos.z, {
+        onHitPlayer: (n, dmg) => this.hurtPlayer(dmg, n.name)
+      });
+    }
+
+    if (this._fridgeCd > 0) this._fridgeCd -= dt;
 
     // розыск: затухает, если какое-то время не нарушать
     if (this._hitMsgCd > 0) this._hitMsgCd -= dt;

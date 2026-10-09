@@ -33,6 +33,8 @@ export function createPlayer(opts = {}) {
     vehicles: [],             // [{type, color, plate, x, z, rot, fuel, damage, stored}]
     properties: [],           // [{id, name, x, z, price, garage}]
 
+    stash: {},                // id недвижимости -> [{id, qty}] (сейф/хранилище)
+    worn: {},                 // слот одежды -> id предмета
     job: null,                // {id, stops:[{x,z,done}], current, earned}
     jobsDone: {},
     quests: {},               // id -> {step, done}
@@ -209,16 +211,68 @@ export function sellVehicle(p, plate) {
 
 /* ======================= НЕДВИЖИМОСТЬ ======================= */
 export function buyProperty(p, poi) {
-  if (!poi || poi.type !== 'house') return { ok: false, reason: 'Это не продаётся' };
+  if (!poi || (poi.type !== 'house' && poi.type !== 'apartment')) return { ok: false, reason: 'Это не продаётся' };
   if (p.properties.some(h => h.id === poi.id)) return { ok: false, reason: 'Уже твоё' };
   if (p.money < poi.price) return { ok: false, reason: 'Не хватает денег' };
   p.money -= poi.price;
-  p.properties.push({ id: poi.id, name: poi.name, x: poi.x, z: poi.z, price: poi.price, garage: poi.garage });
+  p.properties.push({ id: poi.id, name: poi.name, x: poi.x, z: poi.z, price: poi.price,
+    garage: poi.garage, kind: poi.type, floor: poi.floor });
   return { ok: true, messages: [`Куплен ${poi.name} за ${poi.price} $`] };
 }
 
 export function ownsProperty(p, id) {
   return p.properties.some(h => h.id === id);
+}
+
+/* ======================= ХРАНИЛИЩЕ (сейф в жилье) ======================= */
+export function stashList(p, where = 'home') {
+  if (!p.stash || typeof p.stash !== 'object') p.stash = {};
+  if (!Array.isArray(p.stash[where])) p.stash[where] = [];
+  return p.stash[where];
+}
+
+export const STASH_MAX = 60;   // предметов в сейфе
+
+/** Кладёт предмет из инвентаря в сейф. */
+export function stashPut(p, where, id, qty = 1) {
+  if (invCount(p, id) < qty) return { ok: false, reason: 'Нет в инвентаре' };
+  const list = stashList(p, where);
+  const total = list.reduce((s, i) => s + i.qty, 0);
+  if (total + qty > STASH_MAX) return { ok: false, reason: 'В сейфе нет места' };
+  removeItem(p, id, qty);
+  const e = list.find(i => i.id === id);
+  if (e) e.qty += qty; else list.push({ id, qty });
+  return { ok: true };
+}
+
+/** Забирает предмет из сейфа обратно в инвентарь. */
+export function stashTake(p, where, id, qty = 1) {
+  const list = stashList(p, where);
+  const e = list.find(i => i.id === id);
+  if (!e || e.qty < qty) return { ok: false, reason: 'Нет в сейфе' };
+  if (!canCarry(p, id, qty)) return { ok: false, reason: 'Слишком тяжело' };
+  e.qty -= qty;
+  if (e.qty <= 0) list.splice(list.indexOf(e), 1);
+  addItem(p, id, qty);
+  return { ok: true };
+}
+
+/* ======================= ОДЕЖДА ======================= */
+/** Надевает вещь из инвентаря в свой слот (футболка/штаны/обувь). */
+export function wearItem(p, id) {
+  const it = ITEMS[id];
+  if (!it || !it.wear) return { ok: false, reason: 'Это не одежда' };
+  if (invCount(p, id) <= 0) return { ok: false, reason: 'Нет в инвентаре' };
+  p.worn = p.worn || {};
+  p.worn[it.wear] = id;
+  return { ok: true, slot: it.wear };
+}
+
+export function takeOff(p, slot) {
+  p.worn = p.worn || {};
+  if (!p.worn[slot]) return { ok: false, reason: 'Слот пуст' };
+  delete p.worn[slot];
+  return { ok: true };
 }
 
 /* ======================= РАБОТЫ ======================= */
@@ -388,6 +442,8 @@ export function load() {
     d.quests = d.quests || {};
     d.licenses = d.licenses || {};
     normalizeAmmo(d);          // старые сейвы: ammo было числом
+    if (!d.stash || typeof d.stash !== 'object') d.stash = {};
+    if (!d.worn || typeof d.worn !== 'object') d.worn = {};
     if (!Number.isFinite(d.armor)) d.armor = 0;
     if (d.equipped && !WEAPONS[d.equipped]) d.equipped = null;
     return d;

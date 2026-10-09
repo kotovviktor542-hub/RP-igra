@@ -208,6 +208,108 @@ export class Panels {
     }
   }
 
+  /* ======================= ДОМ: ГАРДЕРОБ И СЕЙФ ======================= */
+  render_wardrobe() {
+    const p = this.game.player;
+    this.title.textContent = 'Гардероб';
+    const b = this.body;
+    b.innerHTML = '';
+    p.worn = p.worn || {};
+
+    const SLOTS = [['shirt', 'Верх'], ['pants', 'Низ'], ['shoes', 'Обувь']];
+    b.appendChild(el('div', 'sec', 'Надето'));
+    SLOTS.forEach(([slot, title]) => {
+      const id = p.worn[slot];
+      const row = el('div', 'row', `<div class="ic">👕</div>
+        <div class="grow"><div class="t">${title}</div>
+        <div class="d">${id ? ITEMS[id].name : 'ничего'}</div></div>`);
+      if (id) {
+        const off = el('button', 'btn sm', 'Снять');
+        off.onclick = () => { S.takeOff(p, slot); this.game.applyLook(); this.refresh(); };
+        row.appendChild(off);
+      }
+      b.appendChild(row);
+    });
+
+    b.appendChild(el('div', 'sec', 'В инвентаре'));
+    const cloth = p.inventory.filter(i => ITEMS[i.id]?.wear);
+    if (!cloth.length) b.appendChild(el('div', 'empty', 'Одежду можно купить в магазине одежды.'));
+    cloth.forEach(entry => {
+      const it = ITEMS[entry.id];
+      const row = el('div', 'row', `<div class="ic">👕</div>
+        <div class="grow"><div class="t">${it.name} ×${entry.qty}</div>
+        <div class="d">слот: ${it.wear}</div></div>`);
+      const on = el('button', 'btn sm primary', 'Надеть');
+      on.onclick = () => {
+        const r = S.wearItem(p, entry.id);
+        this.game.hud.toast(r.ok ? 'Надето: ' + it.name : r.reason, r.ok ? 'good' : 'bad');
+        this.game.applyLook();
+        this.refresh();
+      };
+      row.appendChild(on);
+      b.appendChild(row);
+    });
+
+    b.appendChild(el('div', 'sec', 'Цвет одежды'));
+    const colors = [['Серый', 0x8d949c], ['Синий', 0x33507a], ['Зелёный', 0x3d6b4a],
+      ['Бордовый', 0x7a3340], ['Чёрный', 0x23262b], ['Белый', 0xdedfe2]];
+    const rowC = el('div', 'row');
+    colors.forEach(([name, hex]) => {
+      const bt = el('button', 'btn sm', name);
+      bt.onclick = () => {
+        p.look = { ...(p.look || {}), shirt: hex };
+        this.game.applyLook();
+        this.game.hud.toast('Цвет: ' + name, 'good');
+      };
+      rowC.appendChild(bt);
+    });
+    b.appendChild(rowC);
+  }
+
+  render_stash(where) {
+    this._arg = where;
+    const p = this.game.player;
+    const key = where || 'home';
+    this.title.textContent = 'Сейф';
+    const b = this.body;
+    b.innerHTML = '';
+    const list = S.stashList(p, key);
+    const total = list.reduce((s, i) => s + i.qty, 0);
+    b.appendChild(el('div', 'sec', `В сейфе ${total} / ${S.STASH_MAX} предметов. Вещи в сейфе не отнимут при аресте.`));
+
+    if (!list.length) b.appendChild(el('div', 'empty', 'Пусто. Сложи сюда лишнее — разгрузишь карманы.'));
+    list.forEach(entry => {
+      const it = ITEMS[entry.id];
+      const row = el('div', 'row', `<div class="ic">${CAT_ICON[it?.cat] || '•'}</div>
+        <div class="grow"><div class="t">${it?.name || entry.id} ×${entry.qty}</div>
+        <div class="d">${(it?.weight || 0).toFixed(1)} кг за штуку</div></div>`);
+      const take = el('button', 'btn sm primary', 'Забрать');
+      take.onclick = () => {
+        const r = S.stashTake(p, key, entry.id, 1);
+        this.game.hud.toast(r.ok ? 'Забрал: ' + it.name : r.reason, r.ok ? 'good' : 'bad');
+        this.refresh();
+      };
+      row.appendChild(take);
+      b.appendChild(row);
+    });
+
+    b.appendChild(el('div', 'sec', 'Положить из инвентаря'));
+    if (!p.inventory.length) b.appendChild(el('div', 'empty', 'Инвентарь пуст.'));
+    p.inventory.forEach(entry => {
+      const it = ITEMS[entry.id];
+      const row = el('div', 'row', `<div class="ic">${CAT_ICON[it?.cat] || '•'}</div>
+        <div class="grow"><div class="t">${it?.name || entry.id} ×${entry.qty}</div></div>`);
+      const put = el('button', 'btn sm', 'В сейф');
+      put.onclick = () => {
+        const r = S.stashPut(p, key, entry.id, 1);
+        this.game.hud.toast(r.ok ? 'Убрал в сейф: ' + it.name : r.reason, r.ok ? 'good' : 'bad');
+        this.refresh();
+      };
+      row.appendChild(put);
+      b.appendChild(row);
+    });
+  }
+
   /* ======================= РАБОТЫ ======================= */
   render_jobs() {
     const p = this.game.player;

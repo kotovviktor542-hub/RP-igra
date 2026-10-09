@@ -448,7 +448,14 @@ export class PropSystem {
   }
 
   /** Показывает только реквизит вокруг игрока. Вызывать каждый кадр. */
+  /** Прячет весь реквизит (вход в помещение). */
+  setVisible(on) {
+    this.hidden = !on;
+    this.meshes.forEach(m => { m.visible = on; });
+  }
+
   updateCulling(x, z, radius) {
+    if (this.hidden) return;
     const r2 = radius * radius;
     this.cells.forEach(cell => {
       const dx = cell.x - x, dz = cell.z - z;

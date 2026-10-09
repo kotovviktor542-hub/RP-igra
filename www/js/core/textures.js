@@ -404,8 +404,89 @@ function concrete() {
   return { map: toTexture(c, 1), normalMap: toTexture(normalFromHeight(c, 1.0), 1, false) };
 }
 
+
+/* ======================= ИНТЕРЬЕРЫ ======================= */
+/** Паркет: ёлочка из досок с прожилками. */
+function parquet() {
+  const S = 256;
+  const c = makeCanvas(S);
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#6b4a2b';
+  ctx.fillRect(0, 0, S, S);
+  const bw = S / 8, bh = S / 4;
+  for (let y = 0; y < S; y += bh) {
+    for (let x = 0; x < S; x += bw) {
+      const shade = 28 + Math.random() * 34;
+      ctx.fillStyle = `rgb(${110 + shade}, ${72 + shade * 0.6}, ${38 + shade * 0.4})`;
+      ctx.fillRect(x + 1, y + 1, bw - 2, bh - 2);
+      // прожилки
+      ctx.strokeStyle = 'rgba(60,36,18,0.25)';
+      ctx.lineWidth = 1;
+      for (let k = 0; k < 4; k++) {
+        const yy = y + 4 + Math.random() * (bh - 8);
+        ctx.beginPath();
+        ctx.moveTo(x + 2, yy);
+        ctx.lineTo(x + bw - 2, yy + (Math.random() - 0.5) * 3);
+        ctx.stroke();
+      }
+    }
+  }
+  noise(ctx, S, 10);
+  return { map: toTexture(c, 1), normalMap: toTexture(normalFromHeight(c, 0.8), 1, false) };
+}
+
+/** Керамическая плитка со швами. */
+function tile() {
+  const S = 256;
+  const c = makeCanvas(S);
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#d8d8d2';
+  ctx.fillRect(0, 0, S, S);
+  const n = 4, cell = S / n;
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      const v = 210 + Math.random() * 30;
+      ctx.fillStyle = `rgb(${v},${v},${v - 6})`;
+      ctx.fillRect(i * cell + 2, j * cell + 2, cell - 4, cell - 4);
+    }
+  }
+  noise(ctx, S, 8);
+  return { map: toTexture(c, 1), normalMap: toTexture(normalFromHeight(c, 1.4), 1, false) };
+}
+
+/** Обои с мягким вертикальным рисунком. */
+function wallpaper() {
+  const S = 256;
+  const c = makeCanvas(S);
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#cfc6b8';
+  ctx.fillRect(0, 0, S, S);
+  for (let x = 0; x < S; x += 16) {
+    ctx.fillStyle = x % 32 === 0 ? 'rgba(255,255,255,0.18)' : 'rgba(120,105,88,0.10)';
+    ctx.fillRect(x, 0, 8, S);
+  }
+  splotches(ctx, S, 25, ['200,190,175', '180,168,150'], 10, 40, 0.10);
+  noise(ctx, S, 7);
+  return { map: toTexture(c, 1), normalMap: toTexture(normalFromHeight(c, 0.5), 1, false) };
+}
+
+/** Ковролин/ковёр с ворсом. */
+function carpet() {
+  const S = 256;
+  const c = makeCanvas(S);
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#6a4049';
+  ctx.fillRect(0, 0, S, S);
+  for (let i = 0; i < 4000; i++) {
+    const v = Math.random() * 40;
+    ctx.fillStyle = `rgba(${150 + v},${90 + v},${100 + v},0.35)`;
+    ctx.fillRect(Math.random() * S, Math.random() * S, 2, 2);
+  }
+  return { map: toTexture(c, 1), normalMap: toTexture(normalFromHeight(c, 1.0), 1, false) };
+}
+
 /* ======================= API ======================= */
-const builders = { asphalt, sidewalk, grass, roof, concrete };
+const builders = { asphalt, sidewalk, grass, roof, concrete, parquet, tile, wallpaper, carpet };
 
 export function getTex(name) {
   if (!cache.has(name)) cache.set(name, builders[name]());

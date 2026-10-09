@@ -628,6 +628,58 @@ group('Оружие и боеприпасы', () => {
   ok('витрина оружейного с характеристиками', /_renderGunShop/.test(read('www/js/ui/panels.js')));
 });
 
+group('Интерьеры, жильё и магазины', () => {
+  const int = read('www/js/world/interior.js');
+  const mainJs3 = read('www/js/main.js');
+  const panelsJs = read('www/js/ui/panels.js');
+  const cityJs = read('www/js/world/city.js');
+  const tex = read('www/js/core/textures.js');
+
+  ok('есть система интерьеров', /export class Interiors/.test(int));
+  ok('комнаты: квартира/дом и торговый зал', /makeHome/.test(int) && /makeShopRoom/.test(int));
+  ok('мебель собрана из деталей', ['sofa', 'bed', 'wardrobe', 'kitchen', 'diningSet', 'tvSet', 'safeBox', 'counter', 'shelfRack', 'fridgeCase']
+    .every(f => int.includes('function ' + f)));
+  ok('в витринах оружейного настоящие модели стволов', /gunDisplay/.test(int) && /makeWeaponMesh/.test(int));
+  ok('в комнатах есть свет и окна', /PointLight/.test(int) && /ceilingLamp/.test(int));
+  ok('интерьерные текстуры PBR', /parquet/.test(tex) && /wallpaper/.test(tex) && /tile/.test(tex) && /normalMap/.test(tex));
+  ok('геометрия комнаты склеивается ради кадров', /function bakeRoom/.test(int) && /mergeGeometries/.test(int));
+  ok('у стен есть столкновения', /collidersNear/.test(int) && /minX/.test(int));
+  ok('вход и выход из помещения', /enterInterior/.test(mainJs3) && /leaveInterior/.test(mainJs3));
+  ok('город выключается внутри помещения', /setVisible\(false\)/.test(mainJs3) && /setVisible\(on\)/.test(cityJs));
+  ok('действия внутри: кровать, шкаф, сейф, касса',
+    ["case 'bed'", "case 'wardrobe'", "case 'stash'", "case 'cashier'"].every(s => mainJs3.includes(s)));
+  ok('магазин открывается входом внутрь', /kind: 'shop', shopKind/.test(mainJs3));
+
+  // жильё
+  ok('в городе есть квартиры', /type: 'apartment'/.test(cityJs));
+  const p = S.createPlayer({});
+  p.money = 999999;
+  const flat = { type: 'apartment', id: 'a1', name: 'Квартира №5', x: 1, z: 2, price: 30000, floor: 2 };
+  ok('квартира покупается', S.buyProperty(p, flat).ok === true);
+  ok('покупка списывает деньги', p.money === 999999 - 30000);
+  ok('квартира числится собственностью', S.ownsProperty(p, 'a1') === true);
+  ok('дважды одно жильё не купить', S.buyProperty(p, flat).ok === false);
+
+  // сейф
+  S.addItem(p, 'medkit', 2);
+  ok('вещь кладётся в сейф', S.stashPut(p, 'a1', 'medkit', 1).ok === true);
+  ok('сейф хранит вещь', S.stashList(p, 'a1').some(i => i.id === 'medkit' && i.qty === 1));
+  ok('из сейфа можно забрать', S.stashTake(p, 'a1', 'medkit', 1).ok === true && S.invCount(p, 'medkit') === 2);
+  ok('чужого из сейфа не взять', S.stashTake(p, 'a1', 'pizza', 1).ok === false);
+  ok('сейф не бездонный', (() => {
+    for (let i = 0; i < 80; i++) { S.addItem(p, 'bandage', 1); S.stashPut(p, 'a1', 'bandage', 1); }
+    const total = S.stashList(p, 'a1').reduce((s, i) => s + i.qty, 0);
+    return total <= S.STASH_MAX;
+  })());
+
+  // одежда
+  S.addItem(p, 'jacket', 1);
+  ok('одежда надевается', S.wearItem(p, 'jacket').ok === true && p.worn.shirt === 'jacket');
+  ok('одежда снимается', S.takeOff(p, 'shirt').ok === true && !p.worn.shirt);
+  ok('не-одежду надеть нельзя', S.wearItem(p, 'medkit').ok === false);
+  ok('панели гардероба и сейфа есть', /render_wardrobe/.test(panelsJs) && /render_stash/.test(panelsJs));
+});
+
 /* ======================= ИТОГ ======================= */
 console.log('\n────────────────────────────────');
 console.log(`Пройдено: \u001b[32m${pass}\u001b[0m   Провалено: ${fail ? '\u001b[31m' + fail + '\u001b[0m' : '0'}`);
