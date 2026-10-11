@@ -30,6 +30,9 @@ import * as S from './game/state.js';
 import { ITEMS, JOBS, ECONOMY } from './game/content.js';
 import { BUILD, checkForUpdate, applyUpdate, lockLandscape, watchOrientation } from './core/updater.js';
 import { Weather } from './world/weather.js';
+import * as D from './game/driving.js';
+import * as BIZ from './game/business.js';
+import * as FAM from './game/family.js';
 import { SFX } from './core/audio.js';
 
 const VERSION = '0.3.0';
@@ -812,7 +815,12 @@ class Game {
     if (job) return { kind: 'jobstop', label: 'Сдать точку', data: job };
 
     const checks = [
-      ['shop', 5.5, x => x.type === 'shop', p => 'Войти: ' + p.name],
+      ['shop', 5.5, x => x.type === 'shop', p => ({
+        driving: 'Автошкола — сдать на права',
+        tuning: 'Автосервис — тюнинг и ремонт',
+        notary: 'Нотариус — семья и документы',
+        business: 'Биржа бизнесов'
+      }[p.shopKind] || ('Войти: ' + p.name))],
       ['gas', 8, x => x.type === 'gas', () => 'Заправка / магазин'],
       ['atm', 3.5, x => x.type === 'atm', () => 'Банкомат'],
       ['hospital_heal', 7, x => x.type === 'hospital_heal', () => 'Лечение — 350 $'],
@@ -877,6 +885,17 @@ class Game {
     if (it.kind === 'indoor') { this._doIndoor(it.data); return; }
     switch (it.kind) {
       case 'enter': {
+        // без нужной категории за руль не пускаем — как в Amazing
+        const cat = it.data.spec.cat || 'B';
+        if (!D.hasLicence(this.player, cat, this.engine.timeScale)) {
+          // за попытку не штрафуем — просто отправляем учиться
+          SFX.ui('err');
+          const school = this.city.nearestPoi(p.pos.x, p.pos.z,
+            x => x.type === 'shop' && x.shopKind === 'driving');
+          this.hud.toast(`Нужны права категории ${cat}. Езжай в автошколу`, 'bad');
+          if (school) this.setWaypoint(school.poi.x, school.poi.z, 'Автошкола');
+          break;
+        }
         it.data.upgradeMesh(this.scene);
         it.data.ensureHeadlights();
         this._bindVehicleEvents(it.data);
@@ -922,12 +941,19 @@ class Game {
         this.player3d.sit(null);
         this.hud.toast('Встал');
         break;
-      case 'shop':
+      case 'shop': {
+        const kind = it.data.shopKind || 'market';
+        // спец-точки открывают свои панели, а не обычный магазин
+        if (kind === 'driving') { this.panels.open('driving'); break; }
+        if (kind === 'tuning') { this.panels.open('tuning', { poi: it.data }); break; }
+        if (kind === 'notary') { this.panels.open('notary'); break; }
+        if (kind === 'business') { this.panels.open('business'); break; }
         this.enterInterior({
-          kind: 'shop', shopKind: it.data.shopKind || 'market',
-          name: it.data.name, poi: it.data, id: 'shop_' + (it.data.shopKind || 'market')
+          kind: 'shop', shopKind: kind,
+          name: it.data.name, poi: it.data, id: 'shop_' + kind
         });
         break;
+      }
       case 'mall':
         this.panels.open('dealership');
         break;
@@ -1424,7 +1450,7 @@ class Game {
       this._speedAcc = 0;
       if (kmh > 105) {
         this.addWanted(0.4, 'превышение скорости');
-        this._warnOnce('speed', `Превышение! ${Math.round(kmh)} км/ч при limit 60`, 12);
+        this._issueFine('speeding', `Превышение! ${Math.round(kmh)} км/ч при лимите 60`);
       } else if (kmh > 82) {
         this._warnOnce('speed2', 'Сбавь скорость — камеры на каждом перекрёстке', 18);
       }
@@ -1441,8 +1467,7 @@ class Game {
         if (st === 'red') {
           this._redCd = 6;
           this.addWanted(0.35, 'проезд на красный');
-          this.hud.toast('Проезд на красный свет — штраф 400 $', 'bad');
-          SFX.notify(false);
+          this._issueFine('redlight', 'Проезд на красный свет');
         }
       }
     }
@@ -1455,6 +1480,39 @@ class Game {
   _travelAxis(heading) {
     const fx = Math.abs(Math.sin(heading)), fz = Math.abs(Math.cos(heading));
     return fx > fz ? 0 : 1;
+  }
+
+  /** Следит за сроком действия прав. */
+  _checkLicenceExpiry(p, timeScale) {
+    const recs = p.licences || {};
+    Object.keys(recs).forEach(cat => {
+      const left = D.licenceDaysLeft(p, cat, timeScale);
+      if (left <= 0) {
+        delete recs[cat];
+        this.hud.toast(`Права категории ${cat} просрочены — нужна пересдача`, 'bad');
+        SFX.notify(false);
+      } else if (left < 3) {
+        this._warnOnce('lic' + cat, `Права категории ${cat} истекают: ${Math.floor(left)} сут.`, 60);
+      }
+    });
+    // синхронизируем старый формат, который читают работы
+    p.licenses.drive = D.hasLicence(p, 'B', timeScale);
+    p.licenses.moto = D.hasLicence(p, 'A', timeScale);
+    p.licenses.truck = D.hasLicence(p, 'C', timeScale);
+    p.licenses.bus = D.hasLicence(p, 'D', timeScale);
+  }
+
+  /** Выписывает штраф ПДД. При большом долге права аннулируют. */
+  _issueFine(kind, msg) {
+    const p = this.player;
+    const r = D.addFine(p, kind);
+    if (!r.ok) return;
+    SFX.notify(false);
+    this.hud.toast(`${msg} — штраф ${r.def.amount} $`, 'bad');
+    if (r.revoked && r.revoked.length) {
+      this.hud.toast(`Долг по штрафам превысил ${D.FINE_LIMIT} $ — права аннулированы!`, 'bad');
+      this.chat.add('* Инспектор: вы лишены водительского удостоверения.', 'sys');
+    }
   }
 
   _warnOnce(key, msg, seconds) {
@@ -1928,6 +1986,25 @@ class Game {
     const gameSeconds = dt * (1 / eng.timeScale) / 60;
     const died = S.tickNeeds(p, gameSeconds * 2.2);
     if (died) this._onDeath();
+
+    // бизнесы приносят выручку раз в игровой час
+    this._bizAcc = (this._bizAcc || 0) + dt / 60 / eng.timeScale / 3600;
+    if (this._bizAcc >= 1) {
+      const hours = Math.floor(this._bizAcc);
+      this._bizAcc -= hours;
+      const earned = BIZ.tick(p, hours);
+      if (earned > 0) {
+        this.hud.toast(`Выручка бизнесов: ${fmtMoney(earned)} на счёт`, 'good');
+        SFX.cash();
+      }
+    }
+
+    // права сгорают по сроку — предупреждаем заранее
+    this._licAcc = (this._licAcc || 0) + dt;
+    if (this._licAcc > 10) {
+      this._licAcc = 0;
+      this._checkLicenceExpiry(p, eng.timeScale);
+    }
 
     // авто-прогресс квестов
     this._visitAcc += dt;

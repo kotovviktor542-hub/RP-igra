@@ -38,7 +38,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
   const errors = [];
   // проверка обновлений ходит на GitHub Pages — локально её ошибки ожидаемы
-  const IGNORE = /github\.io|version\.json|ERR_FAILED|Failed to load resource|\.glb/;
+  const IGNORE = /github\.io|version\.json|ERR_FAILED|Failed to load resource|\.glb|WebSocket|mqtt|mosquitto/i;
   const push = (s) => { if (!IGNORE.test(s)) errors.push(s); };
   const warnings = [];
   page.on('pageerror', e => push('pageerror: ' + e.message));
@@ -183,6 +183,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   console.log('\n\u001b[1mТранспорт\u001b[0m');
   const drive = await page.evaluate(async () => {
     const g = window.__game;
+    // права теперь обязательны — сдаём их до посадки, как в настоящем сценарии
+    const D = await import('/js/game/driving.js');
+    ['A', 'B', 'C', 'D'].forEach(c => D.issueLicence(g.player, c, g.engine.timeScale));
     // телепорт к ближайшей машине и посадка
     const v = g.worldVehicles[0];
     if (!v) return { err: 'нет машин в мире' };
@@ -274,7 +277,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     g.useItem('burger');
     out.used = !g.player.inventory.some(i => i.id === 'burger');
 
-    g.player.licenses.drive = true;
+    const DD = await import('/js/game/driving.js');
+    ['A', 'B', 'C', 'D'].forEach(c => DD.issueLicence(g.player, c, g.engine.timeScale));
     g.startJob('taxi');
     out.jobStarted = !!g.player.job;
     out.stops = g.player.job ? g.player.job.stops.length : 0;

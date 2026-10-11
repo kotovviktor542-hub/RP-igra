@@ -3,6 +3,7 @@
 
 import { ITEMS, SHOP_STOCK, JOBS, QUESTS, ECONOMY, DEALERSHIP } from './content.js';
 import { WEAPONS, normalizeAmmo, addAmmo } from './weapons.js';
+import { hasLicence } from './driving.js';
 
 const SAVE_KEY = 'rp:save:v2';
 export const SAVE_VERSION = 2;
@@ -26,6 +27,10 @@ export function createPlayer(opts = {}) {
     armor: 0,
     equipped: null,
     licenses: {},
+    licences: {},             // 'A'|'B'|'C'|'D' -> {issued, theory}
+    fines: { list: [], debt: 0, paid: 0 },
+    business: { owned: [], market: null, lastTick: Date.now() },
+    family: null,
 
     pos: { x: opts.x ?? 0, z: opts.z ?? 0, rot: 0 },
 
@@ -281,12 +286,22 @@ export function takeOff(p, slot) {
 }
 
 /* ======================= РАБОТЫ ======================= */
-export function startJob(p, jobId, stops) {
+export function startJob(p, jobId, stops, timeScale = 1 / 45) {
   const def = JOBS[jobId];
   if (!def) return { ok: false, reason: 'Нет такой работы' };
   if (p.job) return { ok: false, reason: 'Уже на смене' };
   if (def.reqRep && p.rep < def.reqRep) return { ok: false, reason: `Нужна репутация ${def.reqRep}` };
+  if (def.reqLevel && p.level < def.reqLevel) return { ok: false, reason: `Нужен ${def.reqLevel} уровень` };
   if (def.reqLicense && !p.licenses[def.reqLicense]) return { ok: false, reason: 'Нужны права' };
+  // права по категории, как в Amazing
+  if (def.reqCat && !hasLicence(p, def.reqCat, timeScale)) {
+    return { ok: false, reason: `Нужны права категории ${def.reqCat}` };
+  }
+  // инструмент для работы должен лежать в инвентаре
+  if (def.tool) {
+    const have = (p.inventory || []).some(s => s.id === def.tool && s.qty > 0);
+    if (!have) return { ok: false, reason: `Нужен инструмент: ${def.tool}` };
+  }
 
   p.job = {
     id: jobId,
@@ -381,6 +396,9 @@ export function questEvent(p, type, data = {}) {
       case 'sleep':        match = true; break;
       case 'shoot':        match = true; break;
       case 'reload':       match = true; break;
+      case 'licence':      match = data.cat === step.cat; break;
+      case 'tuning':       match = true; break;
+      case 'buy_business': match = true; break;
       default: match = false;
     }
     if (!match) continue;
@@ -450,6 +468,15 @@ export function load() {
     d.stats2 = d.stats2 || { distDriven: 0, distWalked: 0, visited: {} };
     d.quests = d.quests || {};
     d.licenses = d.licenses || {};
+    // новые поля Amazing-механик: права по категориям, штрафы, бизнесы, семья
+    d.licences = d.licences || {};
+    if (!d.fines || typeof d.fines !== 'object') d.fines = { list: [], debt: 0, paid: 0 };
+    if (!d.fines.list) d.fines.list = [];
+    if (!Number.isFinite(d.fines.debt)) d.fines.debt = 0;
+    if (d.business && !d.business.owned) d.business.owned = [];
+    if (Array.isArray(d.vehicles)) {
+      d.vehicles.forEach(v => { v.tuning = v.tuning || {}; });
+    }
     normalizeAmmo(d);          // старые сейвы: ammo было числом
     if (!d.stash || typeof d.stash !== 'object') d.stash = {};
     if (!d.worn || typeof d.worn !== 'object') d.worn = {};

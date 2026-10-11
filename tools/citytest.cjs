@@ -35,7 +35,8 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   const car = await page.evaluate(async () => {
     const g = window.__game, p3 = g.player3d;
     g.player.money = 500000;
-    g.player.licenses.drive = true;
+    const D = await import('/js/game/driving.js');
+    ['A', 'B', 'C', 'D'].forEach(c => D.issueLicence(g.player, c, g.engine.timeScale));
     g.buyVehicle('sports');
     const plate = g.player.vehicles[0].plate;
     g.summonVehicle(plate);

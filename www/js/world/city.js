@@ -937,7 +937,11 @@ export class City {
     const force = [
       { kind: 'guns', name: 'Оружейный «Калибр»', count: 2 },
       { kind: 'clothes', name: 'Бутик «Витрина»', count: 1 },
-      { kind: 'market', name: 'Супермаркет «Горизонт»', count: 1 }
+      { kind: 'market', name: 'Супермаркет «Горизонт»', count: 1 },
+      { kind: 'driving', name: 'Автошкола «Старт»', count: 1 },
+      { kind: 'tuning', name: 'Автосервис «Гараж 63»', count: 2 },
+      { kind: 'notary', name: 'Нотариус', count: 1 },
+      { kind: 'business', name: 'Биржа бизнесов', count: 1 }
     ];
     const used = new Set();
     for (const f of force) {

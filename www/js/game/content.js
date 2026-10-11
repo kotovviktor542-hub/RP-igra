@@ -27,6 +27,10 @@ export const ITEMS = {
   repairkit:  { name: 'Ремкомплект',   cat: 'tool',   weight: 3.0, price: 140, repair: 1 },
   jerrycan:   { name: 'Канистра',      cat: 'tool',   weight: 8.0, price: 60,  fuel: 30 },
   toolbox:    { name: 'Ящик с инструментом', cat: 'tool', weight: 6.0, price: 320 },
+  pickaxe:    { name: 'Кирка',        cat: 'tool', weight: 3.4, price: 180 },
+  chainsaw:   { name: 'Бензопила',    cat: 'tool', weight: 5.2, price: 640 },
+  diving:     { name: 'Акваланг',     cat: 'tool', weight: 9.0, price: 2400 },
+  sprayer:    { name: 'Опрыскиватель',cat: 'tool', weight: 2.6, price: 210 },
   lockpick:   { name: 'Отмычка',       cat: 'tool',   weight: 0.1, price: 90 },
 
   // одежда
@@ -42,6 +46,10 @@ export const ITEMS = {
   pizzabox:   { name: 'Коробка пиццы', cat: 'cargo',  weight: 1.0, price: 0, questOnly: true },
   trashbag:   { name: 'Мешок мусора',  cat: 'cargo',  weight: 4.0, price: 0, questOnly: true },
   crate:      { name: 'Ящик груза',    cat: 'cargo',  weight: 12.0, price: 0, questOnly: true },
+  ore:        { name: 'Руда',          cat: 'cargo',  weight: 14.0, price: 0, questOnly: true },
+  log:        { name: 'Бревно',        cat: 'cargo',  weight: 11.0, price: 0, questOnly: true },
+  harvest:    { name: 'Урожай',        cat: 'cargo',  weight: 6.0,  price: 0, questOnly: true },
+  salvage:    { name: 'Подводный груз',cat: 'cargo',  weight: 9.0,  price: 0, questOnly: true },
 
   // оружие
   pistol:     { name: 'Пистолет',      cat: 'weapon', weight: 1.1, price: 900,  equip: 'pistol' },
@@ -72,7 +80,7 @@ export const SHOP_STOCK = {
   cafe:        ['coffee', 'sandwich', 'burger', 'cola', 'pizza'],
   pharmacy:    ['bandage', 'medkit', 'painkiller', 'water'],
   electronics: ['phone', 'laptop', 'radio', 'gps'],
-  hardware:    ['repairkit', 'jerrycan', 'toolbox', 'lockpick'],
+  hardware:    ['repairkit', 'jerrycan', 'toolbox', 'lockpick', 'pickaxe', 'chainsaw', 'sprayer', 'diving'],
   guns:        ['pistol', 'revolver', 'shotgun', 'smg', 'rifle',
                 'ammo9', 'ammo357', 'ammo12', 'ammo762', 'holster', 'armor'],
   clothes:     ['tshirt', 'jacket', 'suit', 'jeans', 'sneakers', 'cap'],
@@ -123,9 +131,73 @@ export const JOBS = {
   },
   bus: {
     name: 'Водитель автобуса', icon: '🚌',
-    desc: 'Объезжай остановки по маршруту.',
+    desc: 'Объезжай остановки по маршруту. Нужны права категории D.',
     needVehicle: true, stops: 6, payPerStop: 70, bonus: 150,
-    reqLicense: 'drive', xp: 18
+    reqCat: 'D', xp: 18
+  },
+
+  /* ---- как в Amazing: добыча и производство ---- */
+  mine: {
+    name: 'Шахтёр', icon: '⛏',
+    desc: 'Спускайся в забой и вывози руду на поверхность. Тяжело, но стабильно.',
+    needVehicle: false, stops: 7, payPerStop: 46, bonus: 190,
+    cargo: 'ore', xp: 14, tool: 'pickaxe', fatigue: 2.2
+  },
+  miner: {
+    name: 'Рудокоп', icon: '💎',
+    desc: 'Эксклюзивная добыча: редкая руда уходит дороже обычной породы.',
+    needVehicle: false, stops: 6, payPerStop: 78, bonus: 340,
+    cargo: 'ore', xp: 20, tool: 'pickaxe', fatigue: 2.6, reqLevel: 6
+  },
+  sawmill: {
+    name: 'Лесопилка', icon: '🪵',
+    desc: 'Вали лес и отвози брёвна на пилораму.',
+    needVehicle: false, stops: 7, payPerStop: 42, bonus: 165,
+    cargo: 'log', xp: 13, tool: 'chainsaw', fatigue: 2.0
+  },
+  farm: {
+    name: 'Фермер', icon: '🌾',
+    desc: 'Собирай урожай с грядок и сдавай на базу. Спокойная работа.',
+    needVehicle: false, stops: 8, payPerStop: 34, bonus: 140,
+    cargo: 'harvest', xp: 11, fatigue: 1.4
+  },
+
+  /* ---- как в Amazing: дороги и сервис ---- */
+  mechanic: {
+    name: 'Механик', icon: '🔧',
+    desc: 'Выезжай на вызовы и чини машины клиентов. Нужен инструмент.',
+    needVehicle: true, stops: 5, payPerStop: 120, bonus: 260,
+    tool: 'toolbox', reqCat: 'B', xp: 21
+  },
+  towtruck: {
+    name: 'Эвакуаторщик', icon: '🛻',
+    desc: 'Забирай брошенные машины и отвози на штрафстоянку.',
+    needVehicle: true, stops: 4, payPerStop: 155, bonus: 300,
+    reqCat: 'C', xp: 23
+  },
+  collector: {
+    name: 'Инкассатор', icon: '💰',
+    desc: 'Развози деньги между банками. Опасно — могут напасть.',
+    needVehicle: true, stops: 4, payPerStop: 195, bonus: 420,
+    reqCat: 'C', reqLevel: 5, risk: 0.35, xp: 26
+  },
+  diver: {
+    name: 'Дайвер', icon: '🤿',
+    desc: 'Поднимай грузы со дна в порту. Без акваланга не суйся.',
+    needVehicle: false, stops: 5, payPerStop: 96, bonus: 240,
+    cargo: 'salvage', tool: 'diving', reqLevel: 8, xp: 22
+  },
+  exterminator: {
+    name: 'Дезинсектор', icon: '🪳',
+    desc: 'Трави тараканов и мой окна по заказам. До пяти заявок за смену.',
+    needVehicle: false, stops: 5, payPerStop: 58, bonus: 150,
+    tool: 'sprayer', xp: 12
+  },
+  dealer: {
+    name: 'Перекуп авто', icon: '🚗',
+    desc: 'Скупай машины дешевле рынка и перепродавай с наценкой.',
+    needVehicle: true, stops: 3, payPerStop: 240, bonus: 520,
+    reqCat: 'B', reqLevel: 12, xp: 30
   }
 };
 
@@ -156,13 +228,37 @@ export const QUESTS = [
     reward: { money: 150, rep: 3, xp: 10 }
   },
   {
+    id: 'q_licence', name: 'Права прежде всего',
+    desc: 'Без водительского за руль не пустят. Съезди в автошколу и сдай теорию на категорию B.',
+    steps: [
+      { id: 'get_licence', text: 'Сдать на права категории B', type: 'licence', cat: 'B' }
+    ],
+    reward: { money: 500, rep: 4, xp: 25 }
+  },
+  {
     id: 'q_wheels', name: 'Нужны колёса',
-    desc: 'Без машины в этом городе тяжело. Сядь за руль любого авто.',
+    desc: 'Права есть — теперь за руль. Сядь в любое авто и прокатись.',
     steps: [
       { id: 'enter_car', text: 'Сесть в машину', type: 'enter_vehicle' },
       { id: 'drive', text: 'Проехать 500 метров', type: 'drive_dist', amount: 500 }
     ],
-    reward: { money: 300, rep: 5, xp: 20, license: 'drive' }
+    reward: { money: 300, rep: 5, xp: 20 }
+  },
+  {
+    id: 'q_tuning', name: 'Под капотом',
+    desc: 'Загляни в автосервис: поставь любую деталь тюнинга на свою машину.',
+    steps: [
+      { id: 'buy_tuning', text: 'Установить деталь тюнинга', type: 'tuning' }
+    ],
+    reward: { money: 900, rep: 6, xp: 35 }
+  },
+  {
+    id: 'q_business', name: 'Своё дело',
+    desc: 'Купи бизнес на бирже — он будет приносить выручку каждый игровой час.',
+    steps: [
+      { id: 'buy_biz', text: 'Купить бизнес', type: 'buy_business' }
+    ],
+    reward: { money: 2000, rep: 10, xp: 60 }
   },
   {
     id: 'q_job', name: 'Нужна работа',
@@ -228,7 +324,13 @@ QUESTS.push(
 );
 
 /* ======================= АВТОСАЛОН ======================= */
-export const DEALERSHIP = ['hatch', 'sedan', 'suv', 'pickup', 'van', 'sports', 'truck'];
+/* Что реально стоит в автосалоне. Отечественный автопарк — как в Amazing:
+   Жигули, Волга, Нива, УАЗ, «Буханка», ГАЗель, КАМАЗ, ОКА, скутер, «Урал». */
+export const DEALERSHIP = [
+  'oka', 'vaz2107', 'vaz2109', 'vaz2114', 'niva', 'volga', 'uaz', 'buhanka',
+  'gazelle', 'kamaz', 'scooter', 'ural',
+  'hatch', 'sedan', 'suv', 'pickup', 'van', 'sports', 'truck'
+];
 
 /* ======================= ЭКОНОМИКА ======================= */
 export const ECONOMY = {

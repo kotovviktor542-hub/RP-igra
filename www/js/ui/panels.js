@@ -8,6 +8,10 @@ import { WEAPONS, AMMO, ammoLabel } from '../game/weapons.js';
 import * as F from '../game/factions.js';
 import { fmtMoney, dist2D } from '../core/utils.js';
 import { SFX } from '../core/audio.js';
+import { TUNING, tuningStats } from '../entities/vehicle.js';
+import * as D from '../game/driving.js';
+import * as BIZ from '../game/business.js';
+import * as FAM from '../game/family.js';
 
 const $ = id => document.getElementById(id);
 const el = (tag, cls, html) => {
@@ -640,6 +644,18 @@ export class Panels {
       <div class="kv"><span>Транспорт</span><b>${p.vehicles.length}</b></div>
       <div class="kv"><span>Недвижимость</span><b>${p.properties.length}</b></div>
       <div class="kv"><span>В игре</span><b>${Math.floor(p.playtime / 60)} мин</b></div>`;
+    const bizS = BIZ.summary(p);
+    if (bizS.count) {
+      info.innerHTML += `<div class="kv"><span>Бизнесы</span><b>${bizS.count} · ${bizS.perHourText}/час</b></div>`;
+    }
+    const famS = FAM.summary(p);
+    if (famS) {
+      info.innerHTML += `<div class="kv"><span>Семья</span><b>${famS.name} · ${famS.role}</b></div>`;
+    }
+    const lic = D.licenceSummary(p, this.game.engine.timeScale).filter(l => l.has);
+    info.innerHTML += `<div class="kv"><span>Права</span><b>${lic.length
+      ? lic.map(l => l.cat).join(' ') : 'нет'}</b></div>
+      <div class="kv"><span>Долг по штрафам</span><b>${fmtMoney((p.fines && p.fines.debt) || 0)}</b></div>`;
     b.appendChild(info);
 
     b.appendChild(el('div', 'sec', 'Разделы'));
@@ -649,6 +665,8 @@ export class Panels {
       ['🏛 Организации', 'factions'],
       ['🎯 Задания', 'quests'],
       ['🏦 Банк', 'bank'],
+      ['🏪 Мои бизнесы', 'business'],
+      ['👨‍👩‍👧 Семья', 'notary'],
       ['🌐 Мультиплеер', 'servers'],
       ['⚙️ Настройки', 'settings']
     ];
@@ -967,4 +985,356 @@ export class Panels {
       Телефон и компьютер должны быть в одной Wi-Fi сети.
       Мир детерминированный (один сид), поэтому город у всех одинаковый.</div>`));
   }
+
+  /* ======================= АВТОШКОЛА ======================= */
+  render_driving() {
+    const p = this.game.player;
+    const b = this.body;
+    b.innerHTML = '';
+    this.title.textContent = 'Автошкола «Старт»';
+
+    // если идёт экзамен — показываем билет
+    if (this._exam && this._exam.answers) { this._renderExamTicket(); return; }
+
+    b.appendChild(el('div', 'd', '<div class="d" style="line-height:1.6">Теория сдаётся один раз и открывает '
+      + 'практику по всем категориям. Права действуют <b>30 игровых суток</b>, потом пересдача. '
+      + 'За неоплаченные штрафы свыше ' + D.FINE_LIMIT + ' $ права аннулируют.</div>'));
+
+    const summary = D.licenceSummary(p, this.game.engine.timeScale);
+    summary.forEach(s => {
+      const r = el('div', 'row');
+      const state = s.has
+        ? `<span style="color:var(--good)">есть · ${s.daysLeft} сут.</span>`
+        : '<span style="color:var(--muted)">нет</span>';
+      r.innerHTML = `<div class="ic">${s.cat}</div><div class="grow"><div class="t">${s.name}</div>
+        <div class="d">${s.desc}</div></div><div style="font-size:11px">${state}</div>`;
+      const btn = el('button', 'btn sm', s.has ? 'Пересдать' : 'Сдать — ' + D.EXAM_FEE + ' $');
+      btn.onclick = () => this._startExam(s.cat);
+      r.appendChild(btn);
+      b.appendChild(r);
+    });
+
+    // штрафы
+    p.fines = p.fines || { list: [], debt: 0, paid: 0 };
+    b.appendChild(el('div', 'sec', `Штрафы ПДД — долг ${fmtMoney(p.fines.debt)}`));
+    if (!p.fines.list.length) {
+      b.appendChild(el('div', 'd', 'Нарушений нет. Так держать.'));
+    } else {
+      p.fines.list.slice(-8).reverse().forEach(f => {
+        const def = D.FINES[f.kind];
+        const r = el('div', 'row');
+        r.innerHTML = `<div class="ic">${f.paid ? '✅' : '⚠'}</div><div class="grow">
+          <div class="t">${def ? def.name : f.kind}</div>
+          <div class="d">${fmtMoney(f.amount)} · ${f.paid ? 'оплачен' : 'не оплачен'}</div></div>`;
+        b.appendChild(r);
+      });
+      const pay = el('button', 'btn good', `Оплатить всё — ${fmtMoney(p.fines.debt)}`);
+      pay.disabled = p.fines.debt === 0 || p.money < p.fines.debt;
+      pay.onclick = () => {
+        const r = D.payFines(p);
+        if (!r.ok) { this.game.hud.toast(r.reason, 'bad'); return; }
+        SFX.cash();
+        this.game.hud.toast(`Штрафы оплачены: ${fmtMoney(r.total)}`, 'good');
+        this.refresh();
+      };
+      b.appendChild(pay);
+    }
+  }
+
+  _startExam(cat) {
+    const p = this.game.player;
+    if (p.money < D.EXAM_FEE) { this.game.hud.toast('Сдача стоит ' + D.EXAM_FEE + ' $', 'bad'); return; }
+    p.money -= D.EXAM_FEE;
+    this._exam = { cat, ticket: D.makeTicket(), answers: [], step: 0 };
+    SFX.ui('click');
+    this.refresh();
+  }
+
+  _renderExamTicket() {
+    const b = this.body;
+    const ex = this._exam;
+    const t = ex.ticket[ex.step];
+    b.innerHTML = '';
+    this.title.textContent = `Теория · категория ${ex.cat} · вопрос ${ex.step + 1}/${ex.ticket.length}`;
+
+    const bar = el('div', 'd', `<div class="d">Отвечай верно — допускается одна ошибка. '
+      + 'Сейчас верно: <b>${ex.answers.filter((a, i) => a === ex.ticket[i].c).length}</b> из ${ex.step}</div>`);
+    b.appendChild(bar);
+
+    const q = el('div', 'sec', t.q);
+    q.style.fontSize = '14px';
+    q.style.lineHeight = '1.45';
+    b.appendChild(q);
+
+    t.a.forEach((txt, i) => {
+      const btn = el('button', 'btn', txt);
+      btn.style.textAlign = 'left';
+      btn.onclick = () => {
+        ex.answers[ex.step] = i;
+        SFX.ui(i === t.c ? 'ok' : 'err');
+        ex.step++;
+        if (ex.step >= ex.ticket.length) this._finishExam();
+        else this.refresh();
+      };
+      b.appendChild(btn);
+    });
+  }
+
+  _finishExam() {
+    const p = this.game.player;
+    const ex = this._exam;
+    const res = D.passTheory(ex.answers, ex.ticket);
+    this._exam = null;
+    if (res.ok) {
+      D.issueLicence(p, ex.cat, this.game.engine.timeScale);
+      this.game.player && S.questEvent(p, 'licence', { cat: ex.cat });
+      SFX.notify(true);
+      this.game.hud.toast(`Права категории ${ex.cat} получены! ${res.correct}/${res.total}`, 'good');
+      this.game.chat.add(`* Инструктор: сдал на категорию ${ex.cat}, поздравляю.`, 'sys');
+    } else {
+      SFX.notify(false);
+      this.game.hud.toast(`Не сдал: ${res.correct}/${res.ticket.length}. Попробуй ещё`, 'bad');
+    }
+    this.refresh();
+  }
+
+  /* ======================= АВТОСЕРВИС / ТЮНИНГ ======================= */
+  render_tuning(arg) {
+    const p = this.game.player;
+    const b = this.body;
+    b.innerHTML = '';
+    this.title.textContent = (arg && arg.poi && arg.poi.name) || 'Автосервис';
+
+    const rec = p.vehicles[0];
+    if (!rec) {
+      b.appendChild(el('div', 'empty', 'Нужна своя машина. Купи в автосалоне.'));
+      return;
+    }
+    const spec = VEHICLES[rec.type] || VEHICLES.sedan;
+    rec.tuning = rec.tuning || {};
+    const cur = tuningStats(rec.tuning);
+
+    b.appendChild(el('div', 'kv', `<span>${spec.name} · ${rec.plate}</span>
+      <b>${Math.round((1 - (rec.damage || 0)) * 100)} % состояния</b>`));
+    b.appendChild(el('div', 'd', `<div class="d">Мощность ×${cur.power.toFixed(2)} · '
+      + 'максималка ×${cur.topSpeed.toFixed(2)} · сцепление ×${cur.grip.toFixed(2)}'
+      + (cur.nitro ? ' · NOS установлен' : '') + '</div>`));
+
+    // ремонт
+    const repairCost = Math.ceil((rec.damage || 0) * 100 * ECONOMY.repairCostPerPercent);
+    if ((rec.damage || 0) > 0.01) {
+      const rb = el('button', 'btn good', `Кузовной ремонт — ${fmtMoney(repairCost)}`);
+      rb.disabled = p.money < repairCost;
+      rb.onclick = () => {
+        p.money -= repairCost;
+        rec.damage = 0;
+        const v = this.game.worldVehicles.find(x => x.plate === rec.plate);
+        if (v) v.repair(1);
+        SFX.ui('ok');
+        this.game.hud.toast('Машина отремонтирована', 'good');
+        this.refresh();
+      };
+      b.appendChild(rb);
+    }
+
+    // детали по категориям
+    const cats = [
+      ['engine', '⚙ Двигатель и разгон'],
+      ['susp', '📉 Подвеска'],
+      ['style', '🏁 Стайлинг']
+    ];
+    cats.forEach(([id, label]) => {
+      b.appendChild(el('div', 'sec', label));
+      Object.keys(TUNING).forEach(k => {
+        const d = TUNING[k];
+        if (d.cat !== id) return;
+        const field = d.lvl !== undefined && d.cat !== 'engine'
+          ? (d.cat === 'susp' ? 'drop' : null) : null;
+        const ownedKey = TUNING_PART_KEY[k];
+        const owned = !!rec.tuning[ownedKey] && rec.tuning[ownedKey] >= (d[ownedKey] || 1);
+        const blocked = d.req && !rec.tuning[TUNING_PART_KEY[d.req]];
+        const r = el('div', 'row');
+        r.innerHTML = `<div class="ic">${d.icon}</div><div class="grow"><div class="t">${d.name}</div>
+          <div class="d">${d.desc}</div></div>
+          <div style="text-align:right;font-size:11px">${owned
+            ? '<span style="color:var(--good)">стоит</span>'
+            : `<b>${fmtMoney(d.price)}</b>`}</div>`;
+        if (!owned) {
+          const btn = el('button', 'btn sm', blocked ? 'Нужна база' : 'Поставить');
+          btn.disabled = blocked || p.money < d.price;
+          btn.onclick = () => {
+            p.money -= d.price;
+            const patch = {};
+            patch[ownedKey] = d[ownedKey] !== undefined ? d[ownedKey] : true;
+            rec.tuning = Object.assign({}, rec.tuning, patch);
+            const v = this.game.worldVehicles.find(x => x.plate === rec.plate);
+            if (v) { v.setTuning(patch); v.refillNos(); }
+            S.questEvent(p, 'tuning');
+            SFX.cash();
+            this.game.hud.toast(`${d.name} установлен`, 'good');
+            this.refresh();
+          };
+          r.appendChild(btn);
+        }
+        b.appendChild(r);
+      });
+    });
+
+    if (rec.tuning.nitro) {
+      const nb = el('button', 'btn', 'Заправить бак NOS — 900 $');
+      nb.disabled = p.money < 900;
+      nb.onclick = () => {
+        p.money -= 900;
+        const v = this.game.worldVehicles.find(x => x.plate === rec.plate);
+        if (v) v.refillNos();
+        SFX.ui('ok');
+        this.game.hud.toast('Закись азота заправлена', 'good');
+        this.refresh();
+      };
+      b.appendChild(nb);
+    }
+  }
+
+  /* ======================= НОТАРИУС / СЕМЬЯ ======================= */
+  render_notary() {
+    const p = this.game.player;
+    const b = this.body;
+    b.innerHTML = '';
+    this.title.textContent = 'Нотариус';
+
+    const fam = FAM.get(p);
+    if (!fam) {
+      b.appendChild(el('div', 'sec', 'Создать семью'));
+      b.appendChild(el('div', 'd', `<div class="d" style="line-height:1.6">Нужен <b>${FAM.MIN_LEVEL} уровень</b> '
+        + 'и своя недвижимость под штаб. Регистрация через нотариуса — ${fmtMoney(FAM.CREATE_FEE)}.</div>`));
+      const nameRow = el('div', 'row');
+      const input = document.createElement('input');
+      input.className = 'inp';
+      input.placeholder = 'Название семьи';
+      input.maxLength = 22;
+      nameRow.appendChild(input);
+      b.appendChild(nameRow);
+      const btn = el('button', 'btn good', `Зарегистрировать — ${fmtMoney(FAM.CREATE_FEE)}`);
+      btn.onclick = () => {
+        const r = FAM.create(p, input.value.trim());
+        if (!r.ok) { this.game.hud.toast(r.reason, 'bad'); SFX.ui('err'); return; }
+        SFX.notify(true);
+        this.game.hud.toast(`Семья «${r.family.name}» создана`, 'good');
+        this.refresh();
+      };
+      b.appendChild(btn);
+      return;
+    }
+
+    b.appendChild(el('div', 'kv', `<span>Семья</span><b>${fam.name}</b>`));
+    b.appendChild(el('div', 'kv', `<span>Казна</span><b>${fmtMoney(fam.bank)}</b>`));
+    b.appendChild(el('div', 'kv', `<span>Участников</span><b>${fam.members.length}</b>`));
+    b.appendChild(el('div', 'kv', `<span>Твоя роль</span><b>${FAM.ROLES[fam.members.find(m => m.id === p.id) ? fam.members.find(m => m.id === p.id).rank : 0].name}</b>`));
+
+    b.appendChild(el('div', 'sec', 'Состав'));
+    fam.members.forEach(m => {
+      const r = el('div', 'row');
+      r.innerHTML = `<div class="ic">${FAM.ROLES[m.rank].icon}</div><div class="grow">
+        <div class="t">${m.name}</div><div class="d">${FAM.ROLES[m.rank].name} · вклад ${fmtMoney(m.contrib)}</div></div>`;
+      b.appendChild(r);
+    });
+
+    const my = fam.members.find(m => m.id === p.id);
+    if (my && my.rank >= 2) {
+      b.appendChild(el('div', 'sec', 'Управление'));
+      const add = el('button', 'btn', 'Принять NPC в семью');
+      add.onclick = () => {
+        const r = FAM.addNpc(p, this.game);
+        if (!r.ok) { this.game.hud.toast(r.reason, 'bad'); return; }
+        this.game.hud.toast(`${r.member.name} в семье`, 'good');
+        this.refresh();
+      };
+      b.appendChild(add);
+      const wd = el('button', 'btn', `Взять из казны ${fmtMoney(1000)}`);
+      wd.onclick = () => {
+        const r = FAM.withdraw(p, 1000);
+        if (!r.ok) { this.game.hud.toast(r.reason, 'bad'); return; }
+        SFX.cash();
+        this.refresh();
+      };
+      b.appendChild(wd);
+    }
+    const dep = el('button', 'btn good', `Внести в казну ${fmtMoney(500)}`);
+    dep.disabled = p.money < 500;
+    dep.onclick = () => {
+      FAM.deposit(p, 500);
+      SFX.cash();
+      this.refresh();
+    };
+    b.appendChild(dep);
+  }
+
+  /* ======================= БИРЖА БИЗНЕСОВ ======================= */
+  render_business() {
+    const p = this.game.player;
+    const b = this.body;
+    b.innerHTML = '';
+    this.title.textContent = 'Биржа бизнесов';
+
+    const mine = BIZ.owned(p);
+    let income = 0;
+    mine.forEach(o => { income += BIZ.incomeOf(o); });
+    b.appendChild(el('div', 'kv', `<span>Твоих бизнесов</span><b>${mine.length}</b>`));
+    b.appendChild(el('div', 'kv', `<span>Доход в игровой час</span><b>${fmtMoney(income)}</b>`));
+
+    if (mine.length) {
+      b.appendChild(el('div', 'sec', 'Собственность'));
+      mine.forEach(o => {
+        const def = BIZ.TYPES[o.type];
+        const r = el('div', 'row');
+        r.innerHTML = `<div class="ic">${def.icon}</div><div class="grow"><div class="t">${o.name}</div>
+          <div class="d">ур. ${o.level}/${BIZ.MAX_LEVEL} · ${fmtMoney(BIZ.incomeOf(o))}/час · ${def.kind}</div></div>`;
+        const up = el('button', 'btn sm', o.level < BIZ.MAX_LEVEL ? `Апгрейд ${fmtMoney(BIZ.upgradeCost(o))}` : 'макс');
+        up.disabled = o.level >= BIZ.MAX_LEVEL || p.money < BIZ.upgradeCost(o);
+        up.onclick = () => {
+          const r2 = BIZ.upgrade(p, o.id);
+          if (!r2.ok) { this.game.hud.toast(r2.reason, 'bad'); return; }
+          SFX.notify(true);
+          this.game.hud.toast('Бизнес улучшен', 'good');
+          this.refresh();
+        };
+        r.appendChild(up);
+        b.appendChild(r);
+      });
+    }
+
+    b.appendChild(el('div', 'sec', 'Продаётся'));
+    BIZ.market(p).forEach(offer => {
+      const def = BIZ.TYPES[offer.type];
+      const r = el('div', 'row');
+      r.innerHTML = `<div class="ic">${def.icon}</div><div class="grow"><div class="t">${offer.name}</div>
+        <div class="d">${def.desc} · доход ${fmtMoney(BIZ.baseIncome(offer.type))}/час</div></div>
+        <div style="text-align:right;font-size:11px"><b>${fmtMoney(offer.price)}</b></div>`;
+      const btn = el('button', 'btn sm', 'Купить');
+      btn.disabled = p.money < offer.price || mine.length >= BIZ.MAX_OWNED;
+      btn.onclick = () => {
+        const r2 = BIZ.buy(p, offer.id);
+        if (!r2.ok) { this.game.hud.toast(r2.reason, 'bad'); return; }
+        S.questEvent(p, 'buy_business');
+        SFX.cash();
+        this.game.hud.toast(`Куплено: ${offer.name}`, 'good');
+        this.refresh();
+      };
+      r.appendChild(btn);
+      b.appendChild(r);
+    });
+    if (mine.length >= BIZ.MAX_OWNED) {
+      b.appendChild(el('div', 'd', 'Достигнут лим владения: ' + BIZ.MAX_OWNED + ' бизнесов.'));
+    }
+  }
 }
+
+/** Какому полю тюнинга соответствует деталь из каталога. */
+const TUNING_PART_KEY = {
+  stage1: 'stage', stage2: 'stage', stage3: 'stage',
+  nitro: 'nitro', air: 'drop', air2: 'drop',
+  rims1: 'rims', rims2: 'rims', rims3: 'rims',
+  kit1: 'kit', kit2: 'kit', kit3: 'kit',
+  spoiler1: 'spoiler', spoiler2: 'spoiler', spoiler3: 'spoiler',
+  tint: 'tint', stripe: 'vinylStripe', neon: 'neon'
+};

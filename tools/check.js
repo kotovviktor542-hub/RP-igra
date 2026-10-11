@@ -21,6 +21,7 @@ const { ITEMS, SHOP_STOCK, JOBS, QUESTS, ECONOMY, DEALERSHIP } =
 const S = await import(path.join(WWW, 'js/game/state.js'));
 const W = await import(path.join(WWW, 'js/game/weapons.js'));
 const F = await import(path.join(WWW, 'js/game/factions.js'));
+const D = await import(path.join(WWW, 'js/game/driving.js'));
 const { makeRNG, clamp, resolveCircleBoxes, scaleBoxUV, SpatialGrid, fmtMoney } =
   await import(path.join(WWW, 'js/core/utils.js'));
 
@@ -420,12 +421,14 @@ group('Задания', () => {
   ok('награда выдана', p.money === money0 + QUESTS[0].reward.money);
   ok('возвращён список завершённых', done.length === 1 && done[0].id === 'q_start');
 
-  // права через квест
+  // квест «нужны колёса»: права теперь даёт автошкола, квест — только награду
   const q = S.createPlayer({});
   S.questEvent(q, 'enter_vehicle');
   q.stats2.distDriven = 600;
-  S.questEvent(q, 'drive_dist');
-  ok('квест выдаёт права', q.licenses.drive === true);
+  const doneWheels = S.questEvent(q, 'drive_dist');
+  ok('квест про поездку закрывается', doneWheels.length === 1 && doneWheels[0].id === 'q_wheels');
+  ok('за квест выданы деньги', q.money > 0);
+  ok('квест больше не выдаёт права — их даёт автошкола', q.licenses.drive !== true);
 
   ok('завершённый квест не повторяется', S.questEvent(q, 'enter_vehicle').length === 0);
 });
@@ -483,13 +486,22 @@ group('Симуляция: 200 смен подряд', () => {
     const rng = makeRNG(seed);
     const p = S.createPlayer({ name: 'Бот' });
     p.licenses.drive = true;
+    ['A', 'B', 'C', 'D'].forEach(c => D.issueLicence(p, c));
+    ['pickaxe', 'chainsaw', 'toolbox', 'diving', 'sprayer'].forEach(t => S.addItem(p, t, 1));
+    p.level = 14;
     let err = null;
     try {
       for (let i = 0; i < 200; i++) {
         const jobIds = Object.keys(JOBS).filter(id => {
           const d = JOBS[id];
-          return (!d.reqRep || p.rep >= d.reqRep) && (!d.reqLicense || p.licenses[d.reqLicense]);
+          if (d.reqRep && p.rep < d.reqRep) return false;
+          if (d.reqLicense && !p.licenses[d.reqLicense]) return false;
+          if (d.reqLevel && p.level < d.reqLevel) return false;
+          if (d.reqCat && !D.hasLicence(p, d.reqCat)) return false;
+          if (d.tool && !(p.inventory || []).some(s => s.id === d.tool && s.qty > 0)) return false;
+          return true;
         });
+        if (!jobIds.length) throw new Error('нет доступных работ');
         const id = jobIds[rng.int(0, jobIds.length - 1)];
         const def = JOBS[id];
         const stops = Array.from({ length: def.stops }, () => ({ x: rng.range(-500, 500), z: rng.range(-500, 500) }));
