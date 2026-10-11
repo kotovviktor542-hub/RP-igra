@@ -385,6 +385,27 @@ export class Vehicle {
     this.lightsOn = false;
     this.braking = false;
     this.radius = Math.max(this.spec.L, this.spec.W) * 0.42;
+
+    // --- расширенная физика ---
+    this.latSpeed = 0;         // поперечная скорость, м/с (занос)
+    this.rpm = 0.12;           // 0..1 нормализованные обороты
+    this.gear = 1;
+    this.gears = Math.max(4, Math.min(7, Math.round(this.spec.maxSpeed / 9)));
+    this.slip = 0;             // пробуксовка ведущих колёс 0..1
+    this.bounce = 0;           // вертикальная тряска подвески
+    this.bounceV = 0;
+    this.roll = 0;             // сглаженный крен
+    this.pitch = 0;            // сглаженный клевóк
+    // сопротивление подобрано так, чтобы машина выходила на свою паспортную скорость
+    this.rollC = 0.045;
+    this.dragC = Math.max(0.00004,
+      (this.spec.accel * 0.3 - this.rollC * this.spec.maxSpeed)
+      / (this.spec.maxSpeed * this.spec.maxSpeed));
+    this.smokeT = 0;
+    this.burning = false;
+    this.destroyed = false;
+    this._burnT = 0;
+    this.lastImpact = 0;
   }
 
   static randomPlate() {
@@ -394,109 +415,199 @@ export class Vehicle {
   }
 
   /**
+   * Физика: продольная тяга + поперечное скольжение (занос), сцепление зависит от погоды.
    * @param {object} input {throttle:-1..1, steer:-1..1, brake:0..1, handbrake:bool}
+   * @param {object} city  город с коллайдерами (может быть null)
+   * @param {number} gripMul множитель сцепления от погоды (1 = сухо)
    */
-  update(dt, input, city) {
+  update(dt, input, city, gripMul = 1) {
     const sp = this.spec;
     const i = input || { throttle: 0, steer: 0, brake: 0 };
+    const dead = this.destroyed;
 
     // топливо
-    if (this.engineOn && Math.abs(this.speed) > 0.3) {
-      this.fuel = Math.max(0, this.fuel - dt * (0.012 + Math.abs(this.speed) * 0.0022) * sp.mass);
+    if (!dead && this.engineOn && (Math.abs(this.speed) > 0.3 || i.throttle > 0.1)) {
+      this.fuel = Math.max(0, this.fuel - dt * (0.014 + Math.abs(this.speed) * 0.0026 + i.throttle * 0.02) * sp.mass);
     }
-    const hasFuel = this.fuel > 0;
-    const powerMul = (1 - this.damage * 0.5) * (hasFuel ? 1 : 0);
+    const hasFuel = this.fuel > 0 && !dead;
+    const health = 1 - this.damage;
+    const powerMul = (0.45 + health * 0.55) * (hasFuel ? 1 : 0);
 
-    // продольная динамика
-    const maxSp = sp.maxSpeed * (1 - this.damage * 0.3);
+    // ---------- сцепление ----------
+    const grip = clamp(gripMul * (0.55 + health * 0.45), 0.25, 1.15);
+
+    // ---------- продольная динамика ----------
+    const maxSp = sp.maxSpeed * (0.6 + health * 0.4);
     let acc = 0;
     if (this.engineOn && hasFuel) {
       if (i.throttle > 0) {
         const falloff = 1 - clamp(this.speed / maxSp, 0, 1);
-        acc = sp.accel * i.throttle * (0.35 + falloff * 0.65) * powerMul;
+        acc = sp.accel * i.throttle * (0.3 + falloff * 0.7) * powerMul;
       } else if (i.throttle < 0) {
         const falloff = 1 - clamp(-this.speed / (maxSp * 0.35), 0, 1);
-        acc = sp.accel * 0.55 * i.throttle * falloff * powerMul;
+        acc = sp.accel * 0.6 * i.throttle * falloff * powerMul;
       }
     }
 
-    // торможение и сопротивление
-    const brakeF = (i.brake || 0) * 18 + (i.handbrake ? 26 : 0);
+    // тормоза: эффективность падает на мокром и убитых колёсах
+    const brakePower = (16 + 8 * grip) * (0.6 + health * 0.4);
+    const brakeF = ((i.brake || 0) * brakePower + (i.handbrake ? brakePower * 1.5 : 0)) * grip;
     if (Math.abs(this.speed) > 0.05) acc -= Math.sign(this.speed) * brakeF;
-    acc -= this.speed * 0.42;                                   // аэро + качение
-    if (Math.abs(i.throttle) < 0.05 && !i.brake) acc -= Math.sign(this.speed) * 1.6;
+    const wet = 1 + (1 - grip) * 0.3;                 // мокрый асфальт чуть вязче
+    acc -= (this.speed * Math.abs(this.speed) * this.dragC + this.speed * this.rollC) * wet;
+    if (Math.abs(i.throttle) < 0.05 && !i.brake && !i.handbrake) acc -= Math.sign(this.speed) * 1.5;
+
+    // ABS: на грани блокировки тормоз чуть ослабевает
+    const absSlip = (i.brake || 0) > 0.5 && Math.abs(this.speed) > 3 && grip < 0.95;
+    if (absSlip) acc += Math.sign(this.speed) * brakeF * 0.28;
 
     this.speed += acc * dt;
     if (Math.abs(this.speed) < 0.06 && Math.abs(i.throttle) < 0.05) this.speed = 0;
-    this.speed = clamp(this.speed, -maxSp * 0.4, maxSp);
-    this.braking = brakeF > 0 || (i.throttle < 0 && this.speed > 1);
+    this.speed = clamp(this.speed, -maxSp * 0.42, maxSp);
+    this.braking = brakeF > 1 || (i.throttle < 0 && this.speed > 1);
 
-    // руль
-    const speedFactor = 1 - clamp(Math.abs(this.speed) / maxSp, 0, 1) * 0.62;
-    const targetSteer = (i.steer || 0) * 0.62 * speedFactor;
+    // пробуксовка ведущих колёс
+    const wantSlip = (i.throttle > 0.4 && Math.abs(this.speed) < 8 ? i.throttle * (1.25 - grip) : 0)
+      + (i.handbrake && Math.abs(this.speed) > 4 ? 0.5 : 0);
+    this.slip += (clamp(wantSlip, 0, 1) - this.slip) * clamp(dt * 6, 0, 1);
+
+    // ---------- руль ----------
+    const speedFactor = 1 - clamp(Math.abs(this.speed) / maxSp, 0, 1) * 0.66;
+    const targetSteer = (i.steer || 0) * 0.64 * speedFactor;
     this.steer += (targetSteer - this.steer) * clamp(dt * 9, 0, 1);
 
-    // поворот корпуса
+    // ---------- поворот и занос ----------
+    const wheelbase = sp.L * 0.58;
+    let yawRate = 0;
     if (Math.abs(this.speed) > 0.12) {
-      const wheelbase = sp.L * 0.58;
-      const grip = i.handbrake ? 0.55 : 1.0;
-      this.heading -= (this.speed / wheelbase) * Math.tan(this.steer) * dt * grip;
+      yawRate = -(this.speed / wheelbase) * Math.tan(this.steer);
+      // на ручнике задняя ось срывается: занос растёт, поворот усиливается
+      const hb = i.handbrake ? 1 : 0;
+      yawRate *= (1 + hb * 0.45) * grip;
+      this.latSpeed += -yawRate * this.speed * dt * (0.55 + hb * 0.8);
     }
+    this.heading += yawRate * dt;
 
-    // перемещение
-    const dx = -Math.sin(this.heading) * this.speed * dt;
-    const dz = -Math.cos(this.heading) * this.speed * dt;
-    let nx = this.pos.x + dx;
-    let nz = this.pos.z + dz;
+    // поперечная скорость гасится сцеплением; на мокром держится дольше
+    const latGrip = (i.handbrake ? 1.4 : 6.5) * grip;
+    this.latSpeed -= this.latSpeed * clamp(latGrip * dt, 0, 1);
+    this.latSpeed = clamp(this.latSpeed, -maxSp * 0.55, maxSp * 0.55);
+    if (Math.abs(this.latSpeed) < 0.02) this.latSpeed = 0;
 
-    // коллизии
+    // ---------- перемещение ----------
+    const fx = -Math.sin(this.heading), fz = -Math.cos(this.heading);
+    const rx = -fz, rz = fx;
+    const vx = fx * this.speed + rx * this.latSpeed;
+    const vz = fz * this.speed + rz * this.latSpeed;
+    let nx = this.pos.x + vx * dt;
+    let nz = this.pos.z + vz * dt;
+
+    // ---------- коллизии ----------
+    this.lastImpact = 0;
     if (city) {
       const boxes = city.collidersNear(nx, nz, this.radius + 2);
       const res = resolveCircleBoxes(nx, nz, this.radius, boxes);
       if (res.hit) {
-        const impact = Math.abs(this.speed);
-        if (impact > 4) this.damage = clamp(this.damage + impact * 0.004, 0, 1);
-        this.speed *= impact > 8 ? -0.12 : 0.35;
+        const impact = Math.hypot(vx, vz);
         this.lastImpact = impact;
-      } else {
-        this.lastImpact = 0;
+        if (impact > 3) this.hit(impact);
+        // отскок: часть энергии уходит вбок
+        const k = impact > 10 ? -0.18 : 0.3;
+        this.speed *= k;
+        this.latSpeed += (Math.random() - 0.5) * impact * 0.35;
+        this.bounceV += impact * 0.05;
       }
       nx = res.x; nz = res.z;
     }
-
     this.pos.x = nx;
     this.pos.z = nz;
 
-    // визуал
-    this.mesh.position.set(this.pos.x, 0, this.pos.z);
-    this.mesh.rotation.y = this.heading;
+    // ---------- обороты и передача ----------
+    const spd = Math.abs(this.speed);
+    const topGear = this.gears;
+    let g = 1;
+    for (let n = topGear; n >= 1; n--) {
+      if (spd > maxSp * (n - 1) / topGear * 0.92) { g = n; break; }
+    }
+    this.gear = g;
+    const lo = maxSp * (g - 1) / topGear, hi = maxSp * g / topGear;
+    const inGear = clamp((spd - lo) / Math.max(1, hi - lo), 0, 1);
+    const targetRpm = dead ? 0
+      : (this.engineOn ? 0.12 + inGear * 0.72 + (i.throttle > 0.1 && spd < 2 ? 0.22 * i.throttle : 0) : 0);
+    this.rpm += (targetRpm - this.rpm) * clamp(dt * (targetRpm > this.rpm ? 7 : 4), 0, 1);
+    this.rpm = clamp(this.rpm, 0, 1);
 
-    // крен и клевок
-    const lat = Math.tan(this.steer) * this.speed * 0.012;
-    this.mesh.rotation.z = clamp(-lat, -0.09, 0.09);
-    this.mesh.rotation.x = clamp(-acc * 0.004, -0.05, 0.05);
+    // ---------- подвеска и наклон корпуса ----------
+    const rough = 0.5 + Math.min(1, spd / 26);
+    this.bounceV += (Math.random() - 0.5) * dt * 3.2 * rough * grip;
+    this.bounceV -= this.bounce * 42 * dt;
+    this.bounceV *= 1 - clamp(dt * 5, 0, 1);
+    this.bounce = clamp(this.bounce + this.bounceV * dt, -0.09, 0.09);
 
-    // колёса
-    this.wheelSpin += (this.speed / this.mesh.userData.wheelR) * dt;
+    const targetRoll = clamp(-(this.latSpeed * 0.012 + Math.tan(this.steer) * this.speed * 0.008), -0.13, 0.13);
+    this.roll += (targetRoll - this.roll) * clamp(dt * 6, 0, 1);
+    const targetPitch = clamp(-acc * 0.0042 + (i.handbrake ? 0.02 : 0), -0.07, 0.07);
+    this.pitch += (targetPitch - this.pitch) * clamp(dt * 7, 0, 1);
+
+    this.mesh.position.set(this.pos.x, Math.max(0, this.bounce * 0.35), this.pos.z);
+    this.mesh.rotation.set(this.pitch, this.heading, this.roll);
+
+    // ---------- колёса ----------
+    this.wheelSpin += (this.speed / this.mesh.userData.wheelR) * dt + this.slip * dt * 22;
     this.mesh.userData.wheels.forEach(w => {
       w.rotation.x = this.wheelSpin;
       w.rotation.y = w.userData.steer ? this.steer : 0;
     });
 
-    // настоящий свет фар (только у машины под управлением игрока — это дёшево)
+    // ---------- повреждения: дым, огонь, взрыв ----------
+    this._damageFx(dt);
+
+    // ---------- свет ----------
     if (this.headlights) {
       const on = this.lightsOn ? 1 : 0;
-      this.headlights.forEach(l => {
-        l.intensity = on * 2.6;
-        l.visible = !!on;
-      });
+      this.headlights.forEach(l => { l.intensity = on * 2.6; l.visible = !!on; });
     }
-
-    // свет
     const bm = this.mesh.userData.brakeMat;
     if (bm) bm.emissiveIntensity = this.braking ? 2.2 : (this.lightsOn ? 0.5 : 0);
     const lm = this.mesh.userData.lightMat;
-    if (lm) lm.emissiveIntensity = this.lightsOn ? 2.0 : 0;
+    if (lm) lm.emissiveIntensity = this.lightsOn && !this.destroyed ? 2.0 : 0;
+  }
+
+  /** Удар о препятствие: урон + событие для звука. */
+  hit(impact) {
+    if (this.destroyed) return;
+    const dmg = impact * 0.006 * (1.4 - this.spec.mass * 0.2);
+    this.damage = clamp(this.damage + dmg, 0, 1);
+    if (this.damage >= 1 && !this.burning) this.burning = true;
+    if (this.onHit) this.onHit(impact, this.damage);
+  }
+
+  _damageFx(dt) {
+    if (this.damage >= 0.88 && !this.burning && !this.destroyed) this.burning = true;
+    // дым из-под капота
+    if (this.damage > 0.55 && !this.destroyed) {
+      this.smokeT -= dt;
+      if (this.smokeT <= 0 && this.smokePuff) {
+        this.smokeT = this.damage > 0.85 ? 0.07 : 0.2;
+        const fx = -Math.sin(this.heading), fz = -Math.cos(this.heading);
+        this.smokePuff(this.pos.x + fx * this.spec.L * 0.45, 1.1, this.pos.z + fz * this.spec.L * 0.45, this.damage);
+      }
+    }
+    if (!this.burning) return;
+    this._burnT += dt;
+    if (this.onBurn) this.onBurn(this.pos.x, this.pos.z, this._burnT);
+    if (this._burnT > 5.5 && !this.destroyed) {
+      this.destroyed = true;
+      this.engineOn = false;
+      if (this.onExplode) this.onExplode(this.pos.x, this.pos.z);
+    }
+  }
+
+  /** Чинит машину (гараж/СТО). */
+  repair(amount = 1) {
+    this.damage = clamp(this.damage - amount, 0, 1);
+    if (this.damage < 0.95) { this.burning = false; this._burnT = 0; }
+    if (this.damage < 0.5) this.destroyed = false;
   }
 
   get speedKmh() { return Math.abs(this.speed) * 3.6; }
@@ -531,7 +642,6 @@ export class Vehicle {
     return this.headlights;
   }
 
-  repair() { this.damage = 0; }
   refuel(amount) { this.fuel = Math.min(this.maxFuel, this.fuel + amount); }
 
   /** Припаркованную машину «оживляем» перед поездкой: возвращаем крутящиеся колёса. */

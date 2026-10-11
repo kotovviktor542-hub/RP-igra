@@ -6,7 +6,7 @@ import { makeRNG, dist2D, fmtMoney, clamp } from './core/utils.js';
 
 const FIST_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M7 11.2V8.6a1.5 1.5 0 0 1 3 0v2.2"/><path d="M10 10.6V7.8a1.5 1.5 0 0 1 3 0v2.8"/><path d="M13 10.8V8.4a1.5 1.5 0 0 1 3 0v2.6"/><path d="M6.5 10.5h10a2.5 2.5 0 0 1 2.5 2.5v1.6A5.4 5.4 0 0 1 13.6 20h-3A5.1 5.1 0 0 1 5.5 15v-3a1.5 1.5 0 0 1 1-1.5z"/><path d="M5.6 12.6H4.3a1.4 1.4 0 0 1 0-2.8h1.4"/></svg>';
 const WEAPON_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5h14.5a1 1 0 0 1 1 1V12H8.8l-1.2 3.2A2 2 0 0 1 5.7 16.5H4.2a1.2 1.2 0 0 1-1.1-1.6L4.6 11H3a1 1 0 0 1-1-1v-.5a1 1 0 0 1 1-1z"/><path d="M18.5 10.5H21"/><path d="M12.5 12v1.6"/></svg>';
-import { City, GRID, CELL, roadX, OFFSET } from './world/city.js';
+import { City, GRID, CELL, ROAD, roadX, OFFSET } from './world/city.js';
 import { Player } from './entities/player.js';
 import { Vehicle, VEHICLES, CAR_COLORS } from './entities/vehicle.js';
 import { Traffic, Pedestrians, Police } from './entities/ai.js';
@@ -29,6 +29,8 @@ import { NetClient } from './net/client.js';
 import * as S from './game/state.js';
 import { ITEMS, JOBS, ECONOMY } from './game/content.js';
 import { BUILD, checkForUpdate, applyUpdate, lockLandscape, watchOrientation } from './core/updater.js';
+import { Weather } from './world/weather.js';
+import { SFX } from './core/audio.js';
 
 const VERSION = '0.3.0';
 const WORLD_SEED = 20261007;
@@ -98,9 +100,18 @@ class Game {
     this.city._buildBlocks();
     await frame();
 
+    await step(74, 'Светофоры на перекрёстках…');
+    this.city.lights.build(this.city);
+    await frame();
+
     await step(78, 'Деревья, фонари, мелочь…');
     this.city.props.build();
     this.city.props.setDetail(this.engine.quality.props);
+
+    // погода привязывается к движку — он сам красит небо и туман
+    this.weather = new Weather(this.scene, this.engine.level);
+    this.weather.onThunder = () => SFX.thunder(0.6 + Math.random() * 0.4);
+    this.engine.weather = this.weather;
     // губернатор качества сам меняет населённость города
     this.engine.onQualityChange = (q) => this._applyQuality(q);
     await frame();
@@ -127,6 +138,8 @@ class Game {
     this.police = new Police(this.scene, this.city);
     this.wanted = 0;            // уровень розыска 0…5
     this._crimeCool = 0;
+    this._redCd = 0;
+    this._speedAcc = 0;
 
     this.auth = new Auth();
     this.pendingServer = null;      // {url, name} — куда заходим после создания персонажа
@@ -141,6 +154,7 @@ class Game {
 
     lockLandscape();
     watchOrientation($('rotate'));
+    this._bindAudioUnlock();
     this._bindMenu();
     this.engine.add((dt) => this.update(dt));
     this.engine.start();
@@ -865,7 +879,9 @@ class Game {
       case 'enter': {
         it.data.upgradeMesh(this.scene);
         it.data.ensureHeadlights();
+        this._bindVehicleEvents(it.data);
         this._manualLights = false;
+        SFX.door(true);
         this.player3d.enterVehicle(it.data);
         this.controls.setDrivingMode(true);
         this.hud.showSpeedo(true);
@@ -876,6 +892,7 @@ class Game {
       case 'exit': {
         const v = this.player3d.vehicle;
         if (v && v.speedKmh > 12) { this.hud.toast('Сначала притормози', 'bad'); return; }
+        SFX.door(false);
         this.player3d.exitVehicle();
         this.controls.setDrivingMode(false);
         this.hud.showSpeedo(false);
@@ -921,11 +938,15 @@ class Game {
         this._refuelDialog();
         break;
       case 'hospital_heal': {
-        if (p.stats.health >= 99) { this.hud.toast('Ты здоров'); return; }
+        const bleeding = (this.bleeding || 0) > 3;
+        if (p.stats.health >= 99 && !bleeding) { this.hud.toast('Ты здоров'); return; }
         if (p.money < ECONOMY.hospitalFee) { this.hud.toast('Не хватает денег', 'bad'); return; }
         p.money -= ECONOMY.hospitalFee;
         p.stats.health = 100;
-        this.hud.toast('Подлечили. −' + ECONOMY.hospitalFee + ' $', 'good');
+        p.stats.energy = Math.max(p.stats.energy, 60);
+        this.stopBleed(true);
+        this.hud.toast('Подлечили и перевязали. −' + ECONOMY.hospitalFee + ' $', 'good');
+        SFX.cash();
         break;
       }
       case 'house': case 'apartment': {
@@ -1151,6 +1172,7 @@ class Game {
     const r = S.useItem(this.player, id, { vehicle: this.player3d.vehicle });
     if (!r.ok) { this.hud.toast(r.reason, 'bad'); return; }
     this.hud.toast(r.messages[0], 'good');
+    if (r.stopsBleed) this.stopBleed(r.stopsBleed >= 100);
     if (r.equip !== undefined || id === 'pistol') this.syncWeapon();
     if (r.worn) {
       const map = { shirt: 'shirt', pants: 'pants', shoes: 'shoes' };
@@ -1203,7 +1225,9 @@ class Game {
       dmg -= absorbed;
     }
     p.stats.health = Math.max(0, p.stats.health - dmg);
+    if (dmg > 0.5) SFX.hurt();
     this.hud.flashDamage && this.hud.flashDamage();
+    if (dmg > 6) this._startBleed(Math.min(100, (this.bleeding || 0) + dmg * 1.6));
     if (who && !this._hitMsgCd) {
       this._hitMsgCd = 1.2;
       this.chat.add(`* ${who} бьёт тебя`, 'sys');
@@ -1212,6 +1236,235 @@ class Game {
   }
 
   /** Зарплата, срок в СИЗО и закрытые территории — раз в секунду. */
+  /* ======================= МЕДИЦИНА ======================= */
+  /** Кровотечение: тикает уроном, пока не перевяжешь. */
+  _startBleed(amount) {
+    this.bleeding = Math.max(this.bleeding || 0, amount);
+    if (this.bleeding > 40 && !this._bleedWarned) {
+      this._bleedWarned = true;
+      this.hud.toast('Сильное кровотечение! Нужна аптечка или больница', 'bad');
+    }
+  }
+
+  _tickBleed(dt) {
+    if (!this.bleeding) return;
+    const p = this.player;
+    p.stats.health = Math.max(0, p.stats.health - this.bleeding * 0.006 * dt);
+    // кровь сама сворачивается, если не добивают
+    this.bleeding = Math.max(0, this.bleeding - dt * 1.4);
+    if (this.bleeding < 0.5) { this.bleeding = 0; this._bleedWarned = false; }
+    if (p.stats.health <= 0) this._onDeath();
+  }
+
+  /** Перевязка: аптечкой из инвентаря или в больнице. */
+  stopBleed(full = false) {
+    this.bleeding = full ? 0 : Math.max(0, this.bleeding - 60);
+    this._bleedWarned = false;
+    this.hud.toast(full ? 'Кровотечение остановлено' : 'Рана перевязана', 'good');
+    SFX.notify(true);
+  }
+
+  /* ======================= АВТО: урон и последствия ======================= */
+  _bindVehicleEvents(v) {
+    if (!v || v._fxBound) return;
+    v._fxBound = true;
+    v.onHit = (impact, damage) => {
+      SFX.impact(impact * 0.5, 0);
+      if (impact > 14) {
+        SFX.glass();
+        this.hurtPlayer(impact * 0.55, 'ДТП');
+        this._shakeCam(Math.min(0.5, impact * 0.02));
+        if (impact > 20 && this.peds) {
+          // сбитый пешеход рядом
+          const n = this.peds.nearest(v.pos.x, v.pos.z, 4.5);
+          if (n) {
+            this.peds.hit && this.peds.hit(n, 999);
+            this.addWanted(1.2, 'сбит пешеход');
+            this.hud.toast('Ты сбил человека!', 'bad');
+          }
+        }
+      }
+      if (damage > 0.55) this._warnOnce('dmg' + (damage > 0.85 ? 2 : 1),
+        damage > 0.85 ? 'Машина горит! Выбирайся!' : 'Двигатель повреждён — нужен ремонт', 10);
+    };
+    v.onExplode = (x, z) => {
+      SFX.explosion();
+      this._shakeCam(0.8);
+      if (this.player3d && this.player3d.vehicle === v && this.player3d.mode === 'drive') {
+        this.hurtPlayer(70, 'взрыв бака');
+        this.exitVehicle && this.exitVehicle(true);
+      }
+      this._spawnFire(x, z, 4);
+    };
+  }
+
+  _shakeCam(amount) {
+    if (this.player3d) this.player3d.shake = Math.max(this.player3d.shake || 0, amount);
+  }
+
+  /** Простые частицы дыма/огня на месте аварии. */
+  _spawnFire(x, z, seconds) {
+    if (!this.scene) return;
+    const THREE_NS = this.player3d && this.player3d.root ? this.player3d.root.constructor : null;
+    void THREE_NS;
+    this._fires = this._fires || [];
+    this._fires.push({ x, z, t: seconds });
+  }
+
+  _tickFires(dt) {
+    if (!this._fires || !this._fires.length) return;
+    for (let i = this._fires.length - 1; i >= 0; i--) {
+      this._fires[i].t -= dt;
+      if (this._fires[i].t <= 0) this._fires.splice(i, 1);
+    }
+  }
+
+  /* ======================= ЗВУК ======================= */
+  _bindAudioUnlock() {
+    const kick = () => {
+      SFX.init();
+      SFX.resume();
+      window.removeEventListener('pointerdown', kick);
+      window.removeEventListener('keydown', kick);
+    };
+    window.addEventListener('pointerdown', kick, { passive: true });
+    window.addEventListener('keydown', kick);
+  }
+
+  /** Двигатель, сирена, шаги, дождь — всё, что звучит каждый кадр. */
+  _updateAudio(dt) {
+    if (!SFX.ready) return;
+    const p3 = this.player3d;
+    const driving = p3.mode === 'drive' && p3.vehicle;
+    const inside = !!this.interiors.active;
+
+    if (driving) {
+      const v = p3.vehicle;
+      const input = this._lastInput || {};
+      SFX.engine({
+        on: v.engineOn && !v.destroyed,
+        rpm: v.rpm,
+        load: Math.abs(input.throttle || 0) * 0.7 + Math.abs(v.speed) / 30 * 0.5,
+        vol: 1
+      });
+      const skid = Math.abs(v.latSpeed) / 8 + v.slip * 0.8;
+      SFX.skid(Math.min(1, skid), 1);
+    } else {
+      SFX.engine({ on: false });
+      SFX.skid(0);
+    }
+
+    // сирена ближайшего патруля
+    let siren = false, bestD = 90;
+    if (this.wanted > 0 && this.police && this.police.list) {
+      for (const c of this.police.list) {
+        if (c.down) continue;
+        const d = Math.hypot(c.h.root.position.x - p3.pos.x, c.h.root.position.z - p3.pos.z);
+        if (d < bestD) { bestD = d; siren = true; }
+      }
+    }
+    if (this.policeCars) {
+      for (const pc of this.policeCars) {
+        const d = Math.hypot(pc.v.pos.x - p3.pos.x, pc.v.pos.z - p3.pos.z);
+        if (d < 110) { siren = true; if (d < bestD) bestD = d; }
+      }
+    }
+    SFX.siren(siren, 1, bestD / 40);
+    SFX.sirenTick(dt);
+
+    // шаги
+    if (!driving && !inside && p3.speed > 0.6) {
+      SFX.step(this._groundSurface(p3), p3.speed > 3.4);
+    }
+
+    // погода
+    const w = this.weather;
+    if (w) SFX.setWeather(w.rainAmt, 0.2 + w.wind, inside);
+  }
+
+  _groundSurface(p3) {
+    const c = this.city;
+    if (!c) return 'asphalt';
+    const x = p3.pos.x, z = p3.pos.z;
+    const gi = (x - OFFSET) / CELL, gj = (z - OFFSET) / CELL;
+    const fi = gi - Math.floor(gi), fj = gj - Math.floor(gj);
+    const ROAD_F = ROAD / CELL;
+    if (fi < ROAD_F || fj < ROAD_F) return 'asphalt';
+    const poi = c.nearestPoi(x, z, p => p.type === 'park', 14);
+    if (poi) return 'grass';
+    return 'tile';
+  }
+
+  /* ======================= ПОГОДА И ПДД ======================= */
+  _updateRealism(dt) {
+    const eng = this.engine;
+    const p3 = this.player3d;
+    const w = this.weather;
+
+    w.update(dt, this.interiors.active ? null : p3.pos, eng.nightAmount);
+    if (!this.interiors.active) {
+      this.city.updateLights(dt);
+      this.traffic.grip = w.grip;
+    }
+
+    // ---- нарушения ПДД ----
+    if (p3.mode === 'drive' && p3.vehicle && !this.interiors.active) {
+      this._checkTrafficRules(dt, p3);
+    }
+  }
+
+  /** Красный свет, превышение скорости, сбитые пешеходы. */
+  _checkTrafficRules(dt, p3) {
+    const v = p3.vehicle;
+    const kmh = v.speedKmh;
+
+    // превышение: в городе 60, штрафуем сильно выше
+    this._speedAcc = (this._speedAcc || 0) + dt;
+    if (this._speedAcc > 3) {
+      this._speedAcc = 0;
+      if (kmh > 105) {
+        this.addWanted(0.4, 'превышение скорости');
+        this._warnOnce('speed', `Превышение! ${Math.round(kmh)} км/ч при limit 60`, 12);
+      } else if (kmh > 82) {
+        this._warnOnce('speed2', 'Сбавь скорость — камеры на каждом перекрёстке', 18);
+      }
+    }
+
+    // проезд на красный
+    if (this._redCd > 0) this._redCd -= dt;
+    if (kmh > 14 && this._redCd <= 0) {
+      const node = this.city.nearestNode(v.pos.x, v.pos.z);
+      const inter = this.city.lights.hasAt(node.i, node.j);
+      if (inter && dist2D(v.pos.x, v.pos.z, inter.x, inter.z) < 16) {
+        const axis = this._travelAxis(v.heading);
+        const st = this.city.lights.axisState(inter, axis);
+        if (st === 'red') {
+          this._redCd = 6;
+          this.addWanted(0.35, 'проезд на красный');
+          this.hud.toast('Проезд на красный свет — штраф 400 $', 'bad');
+          SFX.notify(false);
+        }
+      }
+    }
+
+    // езда по встречке/тротуару ловится коллизиями — не дублируем
+    void this._redCd;
+  }
+
+  /** 0 — движение вдоль X, 1 — вдоль Z. */
+  _travelAxis(heading) {
+    const fx = Math.abs(Math.sin(heading)), fz = Math.abs(Math.cos(heading));
+    return fx > fz ? 0 : 1;
+  }
+
+  _warnOnce(key, msg, seconds) {
+    this._warns = this._warns || {};
+    const t = performance.now();
+    if (this._warns[key] && t - this._warns[key] < seconds * 1000) return;
+    this._warns[key] = t;
+    this.hud.toast(msg, 'bad');
+  }
+
   _orgTick(dt) {
     const p = this.player;
     this._orgAcc = (this._orgAcc || 0) + dt;
@@ -1355,6 +1608,8 @@ class Game {
 
   /** Перезарядка текущего ствола. */
   reload() {
+    SFX.reloadClick(0);
+    setTimeout(() => SFX.reloadClick(1), 420);
     const p = this.player, p3 = this.player3d;
     const wid = p?.equipped;
     const w = WEAPONS[wid];
@@ -1392,6 +1647,7 @@ class Game {
     }
     if (!p3.aiming) this.toggleAim(true);
     if (!p3.fire(w.rate, w.recoil)) return;
+    SFX.gunshot(w.pellets ? 'shotgun' : (w.auto ? 'smg' : w.damage > 28 ? 'rifle' : 'pistol'), 0);
     S.questEvent(p, 'shoot');
 
     this._weaponHud();
@@ -1610,6 +1866,7 @@ class Game {
 
     // ввод
     const input = this.controls.poll(driving);
+    this._lastInput = input;
 
     // выход из машины по кнопке прыжка
     if (driving && input.jump) {
@@ -1618,10 +1875,12 @@ class Game {
       this._jumpLatch = false;
     }
 
-    p3.update(dt, input, this.interiors.active ? this.interiors : this.city);
+    const gripMul = this.weather ? this.weather.grip : 1;
+    p3.update(dt, input, this.interiors.active ? this.interiors : this.city, gripMul);
 
     // мир
     eng.updateDayNight(dt, p3.pos);
+    if (this.weather) this._updateRealism(dt);
     if (this.interiors.active) {
       // внутри помещения город выключен: и логично, и кадры экономит
       this.interiors.update(dt);
@@ -1638,6 +1897,8 @@ class Game {
 
     if (this._fridgeCd > 0) this._fridgeCd -= dt;
     this._orgTick(dt);
+    this._tickBleed(dt);
+    this._tickFires(dt);
 
     // розыск: затухает, если какое-то время не нарушать
     if (this._hitMsgCd > 0) this._hitMsgCd -= dt;
@@ -1654,6 +1915,7 @@ class Game {
     }
     this.net.update(dt);
     this.chat.ambient(dt);
+    this._updateAudio(dt);
 
     // припаркованные машины: только свет
     for (const v of this.worldVehicles) {
@@ -1682,7 +1944,9 @@ class Game {
     this.hud.update(p, eng, p3, {
       wanted: this.wanted,
       ammoText: WEAPONS[p.equipped] ? ammoLabel(p, p.equipped) : '',
-      armed: !!WEAPONS[p.equipped]
+      armed: !!WEAPONS[p.equipped],
+      weather: this.interiors.active ? null : { icon: this.weather.icon, name: this.weather.label, temp: this.weather.temp },
+      bleeding: this.bleeding || 0
     });
     // фары сами включаются в темноте
     if (driving && !this._manualLights) {

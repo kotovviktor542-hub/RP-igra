@@ -85,6 +85,7 @@ export class Engine {
     this.clock = new THREE.Clock();
     this.updaters = [];
     this.running = false;
+    this.weather = null;      // сюда main.js кладёт экземпляр Weather
     this.time = 9.5;          // игровое время в часах
     this.timeScale = 1 / 45;  // 1 игровой час ≈ 45 секунд реального
 
@@ -211,6 +212,7 @@ export class Engine {
     this.sun.target.updateMatrixWorld();
 
     // цвета
+    const WHITE = new THREE.Color(0xdfe8f2);
     const dayTop = new THREE.Color(0x2f6fc0);
     const dayBot = new THREE.Color(0xc3d9ea);
     const duskTop = new THREE.Color(0x2b3f6b);
@@ -232,10 +234,34 @@ export class Engine {
     this.hemi.color.copy(bot);
     this.ambient.intensity = 0.06 + dayAmt * 0.14;
 
+    // ---- погода: облака глушат солнце, туман режет дальность, молния вспыхивает ----
+    const wx = this.weather;
+    const cloud = wx ? wx.cloud : 0;
+    const grey = new THREE.Color(0x6b7280);
+    if (cloud > 0.01) {
+      top.lerp(grey, cloud * 0.62);
+      bot.lerp(grey, cloud * 0.5);
+      this.skyUniforms.topColor.value.copy(top);
+      this.skyUniforms.bottomColor.value.copy(bot);
+      this.skyUniforms.sunColor.value.multiplyScalar(1 - cloud * 0.85);
+      this.sun.intensity *= (1 - cloud * 0.82);
+      this.hemi.intensity *= (1 - cloud * 0.28);
+    }
+    if (wx && wx.flash > 0.01) {
+      const f = wx.flash;
+      this.hemi.intensity += f * 2.4;
+      this.ambient.intensity += f * 1.6;
+      top.lerp(WHITE, f * 0.5);
+      bot.lerp(WHITE, f * 0.4);
+      this.skyUniforms.topColor.value.copy(top);
+      this.skyUniforms.bottomColor.value.copy(bot);
+    }
+    const fogM = wx ? wx.fogMul : 1;
+
     this.scene.fog.color.copy(bot);
     this.renderer.setClearColor(bot);
-    this.scene.fog.near = this.quality.fog * (0.3 + dayAmt * 0.12);
-    this.scene.fog.far = this.quality.fog * (0.72 + dayAmt * 0.3);
+    this.scene.fog.near = this.quality.fog * (0.3 + dayAmt * 0.12) * fogM;
+    this.scene.fog.far = this.quality.fog * (0.72 + dayAmt * 0.3) * fogM;
 
     this.nightAmount = 1 - dayAmt;
     this.dayAmount = dayAmt;

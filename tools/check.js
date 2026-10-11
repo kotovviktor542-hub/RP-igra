@@ -841,6 +841,83 @@ group('Организации', () => {
   ok('сейв хранит организации', /faction/.test(read('www/js/game/state.js')) && /orgs/.test(read('www/js/game/state.js')));
 });
 
+/* ======================= ЖИВОЙ МИР ======================= */
+group('Реализм: погода, звук, ПДД, физика', () => {
+  const weatherJs = read('www/js/world/weather.js');
+  const audioJs = read('www/js/core/audio.js');
+  const lightsJs = read('www/js/world/trafficlights.js');
+  const vehJs = read('www/js/entities/vehicle.js');
+  const engJs = read('www/js/core/engine.js');
+  const aiJs = read('www/js/entities/ai.js');
+  const hudJs = read('www/js/ui/hud.js');
+  const css = read('www/css/ui.css');
+  const html = read('www/game.html');
+  const mainJs5 = read('www/js/main.js');
+
+  // --- погода ---
+  const kinds = ['clear', 'clouds', 'overcast', 'rain', 'storm', 'fog'];
+  ok('шесть состояний погоды', kinds.every(k => new RegExp(`${k}:\\s*\\{`).test(weatherJs)));
+  ok('у погоды есть сцепление, туман и облачность',
+    kinds.every(k => {
+      const m = weatherJs.match(new RegExp(`${k}:\\s*\\{[^}]*\\}`));
+      return m && /grip:/.test(m[0]) && /fog:/.test(m[0]) && /cloud:/.test(m[0]);
+    }));
+  ok('дождь рисуется частицами', /THREE.Points/.test(weatherJs) && /dropTexture/.test(weatherJs));
+  ok('гроза даёт молнию и гром', /flash/.test(weatherJs) && /onThunder/.test(weatherJs));
+  ok('движок красит небо и туман по погоде',
+    /this.weather/.test(engJs) && /wx.cloud/.test(engJs) && /fogM/.test(engJs));
+  ok('погода подключена к игровому циклу',
+    /new Weather/.test(mainJs5) && /_updateRealism/.test(mainJs5) && /w.grip/.test(mainJs5));
+
+  // --- звук ---
+  ok('звук полностью процедурный, без внешних файлов',
+    /AudioContext/.test(audioJs) && !/\.mp3|\.ogg|\.wav/.test(audioJs));
+  const snd = ['engine', 'skid', 'siren', 'gunshot', 'step', 'impact', 'glass',
+               'hurt', 'explosion', 'thunder', 'cash', 'notify', 'radio', 'horn', 'door', 'ui'];
+  ok('есть все игровые звуки', snd.every(s => new RegExp(`\\b${s}\\(`).test(audioJs)));
+  ok('движок синтезируется по оборотам', /setTargetAtTime/.test(audioJs) && /rpm/.test(audioJs));
+  ok('звук стартует по жесту пользователя', /_bindAudioUnlock/.test(mainJs5) && /pointerdown/.test(mainJs5));
+  ok('громкость настраивается в меню', /setVolume/.test(read('www/js/ui/panels.js')) && /toggleMute/.test(read('www/js/ui/panels.js')));
+
+  // --- светофоры ---
+  ok('светофоры — отдельная система с фазами', /class TrafficLights/.test(lightsJs) && /T_GREEN/.test(lightsJs));
+  ok('корпус светофора составной, не куб',
+    /CylinderGeometry/.test(lightsJs) && /mergeGeometries/.test(lightsJs) && /visor/.test(lightsJs));
+  ok('линзы — InstancedMesh с живым цветом', /InstancedMesh/.test(lightsJs) && /setColorAt/.test(lightsJs));
+  ok('система собрана вместе с городом', /lights\.build\(this\)/.test(read('www/js/world/city.js')));
+  ok('корпуса светофоров отсекаются по расстоянию',
+    /city\._emit/.test(lightsJs) && /metalDark/.test(read('www/js/world/city.js')));
+  ok('светофоры не съедают бюджет телефона', /CircleGeometry/.test(lightsJs));
+  ok('старые декоративные светофоры убраны',
+    !/props.add\('trafficLight'/.test(read('www/js/world/city.js')));
+  ok('трафик стоит на красный', /axisState/.test(aiJs) && /redLight/.test(aiJs));
+  ok('штраф за проезд на красный и превышение',
+    /проезд на красный/.test(mainJs5) && /превышение скорости/.test(mainJs5));
+
+  // --- физика ---
+  ok('машина скользит боком (занос)', /latSpeed/.test(vehJs) && /handbrake/.test(vehJs));
+  ok('сцепление зависит от погоды', /gripMul/.test(vehJs) && /gripMul/.test(read('www/js/entities/player.js')));
+  ok('есть коробка передач и обороты', /this.gear/.test(vehJs) && /this.rpm/.test(vehJs));
+  ok('кузов кренится и клюёт', /this.roll/.test(vehJs) && /this.pitch/.test(vehJs));
+  ok('подвеска отрабатывает неровности', /bounceV/.test(vehJs));
+  ok('повреждения ведут к пожару и взрыву', /burning/.test(vehJs) && /onExplode/.test(vehJs));
+  ok('машину можно починить', /repair\(amount/.test(vehJs)
+    && (vehJs.match(/repair\(/g) || []).length === 1);
+  ok('последствия ДТП подключены к игре', /_bindVehicleEvents/.test(mainJs5) && /сбит пешеход/.test(mainJs5));
+  ok('камера трясётся от ударов', /shake/.test(read('www/js/entities/player.js')) && /_shakeCam/.test(mainJs5));
+
+  // --- медицина ---
+  ok('есть кровотечение и перевязка', /_startBleed/.test(mainJs5) && /stopBleed/.test(mainJs5) && /_tickBleed/.test(mainJs5));
+  ok('бинт и аптечка останавливают кровь',
+    /stopsBleed/.test(read('www/js/game/content.js')) && /stopsBleed/.test(read('www/js/game/state.js')));
+  ok('больница лечит и перевязывает', /stopBleed\(true\)/.test(mainJs5));
+
+  // --- HUD ---
+  ok('в HUD есть погода', /hud-weather/.test(html) && /extra.weather/.test(hudJs) && /hud-weather/.test(css));
+  ok('в спидометре передача и повреждения', /speed-gear/.test(html) && /dmg-fill/.test(html)
+    && /vehicle.gear/.test(hudJs));
+});
+
 /* ======================= ИТОГ ======================= */
 console.log('\n────────────────────────────────');
 console.log(`Пройдено: \u001b[32m${pass}\u001b[0m   Провалено: ${fail ? '\u001b[31m' + fail + '\u001b[0m' : '0'}`);

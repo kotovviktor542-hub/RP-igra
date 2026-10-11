@@ -103,6 +103,7 @@ export function useItem(p, id, ctx = {}) {
     if (it.thirst) p.stats.thirst = clamp100(p.stats.thirst + it.thirst);
     if (it.health) p.stats.health = clamp100(p.stats.health + it.health);
     if (it.energy) p.stats.energy = clamp100(p.stats.energy + it.energy);
+    if (it.stopsBleed) { msgs.push(`${it.name}: кровотечение остановлено`); }
     const parts = [];
     if (p.stats.hunger !== before.hunger) parts.push(`сытость ${sign(p.stats.hunger - before.hunger)}`);
     if (p.stats.thirst !== before.thirst) parts.push(`жажда ${sign(p.stats.thirst - before.thirst)}`);
@@ -130,7 +131,7 @@ export function useItem(p, id, ctx = {}) {
   }
 
   removeItem(p, id, 1);
-  return { ok: true, messages: msgs };
+  return { ok: true, messages: msgs, stopsBleed: it.stopsBleed || 0 };
 }
 
 const clamp100 = v => Math.max(0, Math.min(100, Math.round(v)));

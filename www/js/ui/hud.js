@@ -83,6 +83,20 @@ export class HUD {
     });
 
     $('mm-street').textContent = this.streetName(player.pos.x, player.pos.z);
+
+    // погода
+    const wxEl = $('hud-weather');
+    if (wxEl) {
+      if (extra.weather) {
+        wxEl.classList.remove('hidden');
+        $('wx-icon').textContent = extra.weather.icon;
+        $('wx-txt').textContent = `${extra.weather.name} · ${Math.round(extra.weather.temp)}°`;
+      } else wxEl.classList.add('hidden');
+    }
+
+    // кровотечение
+    const bl = $('hud-bleed');
+    if (bl) bl.classList.toggle('hidden', !(extra.bleeding > 3));
   }
 
   /** Показывает патроны текущего ствола: «12 / 48». */
@@ -246,7 +260,28 @@ export class HUD {
     c.lineTo(R + Math.cos(a) * (R - 30), R + Math.sin(a) * (R - 30));
     c.stroke();
 
+    // тахометр по внутреннему кольцу
+    const rpm = clamp(vehicle.rpm || 0, 0, 1);
+    c.strokeStyle = rpm > 0.85 ? '#ff5d5d' : 'rgba(140,200,255,.75)';
+    c.lineWidth = 4;
+    c.beginPath();
+    c.arc(R, R, R - 30, start, start + (end - start) * rpm);
+    c.stroke();
+
     $('speed-num').textContent = Math.round(kmh);
+
+    const ge = $('speed-gear');
+    if (ge) {
+      ge.textContent = vehicle.engineOn ? (vehicle.speed < -0.3 ? 'R' : vehicle.gear) : 'N';
+      ge.style.color = rpm > 0.85 ? '#ff5d5d' : '#8fd0ff';
+    }
+    const de = $('dmg-fill');
+    if (de) {
+      const d = clamp((vehicle.damage || 0) * 100, 0, 100);
+      de.style.width = d + '%';
+      de.style.background = d > 70 ? '#ff5d5d' : d > 35 ? '#ffb020' : '#8fd0ff';
+    }
+
     const fp = (vehicle.fuel / vehicle.maxFuel) * 100;
     const ff = $('fuel-fill');
     ff.style.width = fp + '%';

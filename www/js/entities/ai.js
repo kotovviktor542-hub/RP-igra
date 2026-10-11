@@ -19,6 +19,8 @@ export class Traffic {
     this.rng = makeRNG(777);
     this.types = ['sedan', 'hatch', 'suv', 'pickup', 'van', 'taxi', 'sports', 'truck', 'bus'];
     this.weights = [26, 20, 14, 8, 8, 10, 4, 6, 4];
+    this.grip = 1;             // сцепление от погоды, ставит main.js
+    this.redRunners = 0;       // для статистики/отладки
   }
 
   _pickType() {
@@ -145,15 +147,36 @@ export class Traffic {
       const nearCross = Math.abs(((v.pos.x - roadX(0)) % CELL + CELL) % CELL) < ROAD ||
                         Math.abs(((v.pos.z - roadX(0)) % CELL + CELL) % CELL) < ROAD;
 
+      // ---------- светофор: стоим на красный перед стоп-линией ----------
+      let redLight = false;
+      const lights = this.city.lights;
+      if (lights && distToTarget < 30 && distToTarget > 6) {
+        const inter = lights.hasAt(c.next.i, c.next.j);
+        if (inter) {
+          const axis = c.node.i !== c.next.i ? 0 : 1;
+          const st = lights.axisState(inter, axis);
+          if (st === 'red' || (st === 'yellow' && distToTarget > 13)) {
+            redLight = true;
+            c.signal = 1;
+          } else c.signal = 0;
+        }
+      } else if (distToTarget <= 6) c.signal = 0;
+
       let target = c.targetSpeed;
       if (nearCross) target *= 0.62;
       if (Math.abs(diff) > 0.5) target *= 0.45;
       if (blocked) target = 0;
+      if (redLight) target = 0;
 
       const throttle = v.speed < target - 0.4 ? 1 : 0;
       const brake = v.speed > target + 0.6 ? clamp((v.speed - target) * 0.25, 0, 1) : 0;
+      const hb = redLight && v.speed > 6 ? true : false;
 
-      v.update(dt, { throttle, steer, brake }, this.city);
+      v.update(dt, { throttle, steer, brake, handbrake: hb }, this.city, this.grip);
+
+      // стоп-лампы у трафика
+      const bm = v.mesh.userData.brakeMat;
+      if (bm) bm.emissiveIntensity = (brake > 0 || redLight) ? 2.2 : (v.lightsOn ? 0.5 : 0);
 
       // застрял — телепорт на полосу
       if (Math.abs(v.speed) < 0.2 && !blocked) {

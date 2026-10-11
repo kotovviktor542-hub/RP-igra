@@ -293,9 +293,10 @@ export class Player {
   /**
    * @param {object} input {mx,my (-1..1 оси движения), run, jump, throttle, steer, brake, handbrake}
    */
-  update(dt, input, city) {
+  update(dt, input, city, gripMul = 1) {
+    this.gripMul = gripMul;
     if (this.mode === 'drive' && this.vehicle) {
-      this._updateDriving(dt, input, city);
+      this._updateDriving(dt, input, city, gripMul);
     } else {
       this._updateOnFoot(dt, input, city);
     }
@@ -538,15 +539,20 @@ export class Player {
     return this._bones;
   }
 
-  _updateDriving(dt, input, city) {
+  _updateDriving(dt, input, city, gripMul = 1) {
     const v = this.vehicle;
     const before = { x: v.pos.x, z: v.pos.z };
+    const beforeSpeed = v.speed;
     v.update(dt, {
       throttle: input.throttle || 0,
       steer: input.steer || 0,
       brake: input.brake || 0,
       handbrake: input.handbrake || false
-    }, city);
+    }, city, gripMul);
+    // события для звука/HUD
+    if (v.lastImpact > 3 && this.onImpact) this.onImpact(v.lastImpact, v.damage);
+    if (v.destroyed && this.onExplode) this.onExplode(v);
+    this._accel = (v.speed - beforeSpeed) / Math.max(dt, 0.0001);
     this.distDriven += dist2D(v.pos.x, v.pos.z, before.x, before.z);
     this.pos.set(v.pos.x, 0, v.pos.z);
     this.heading = v.heading;
@@ -605,6 +611,21 @@ export class Player {
       if (r.hit) { cx = r.x; cz = r.z; }
     }
     if (cy < 0.7) cy = 0.7;
+
+    // тряска камеры от ударов и неровностей
+    if (this.shake > 0.001) {
+      const s = this.shake;
+      cx += (Math.random() - 0.5) * s;
+      cy += (Math.random() - 0.5) * s * 0.7;
+      cz += (Math.random() - 0.5) * s;
+      this.shake = Math.max(0, this.shake - dt * 2.6);
+    }
+    // лёгкая вибрация на скорости по плохой дороге
+    if (driving && Math.abs(this.vehicle.speed) > 9) {
+      const r = Math.min(0.035, Math.abs(this.vehicle.speed) * 0.0009);
+      cy += (Math.random() - 0.5) * r;
+      cx += (Math.random() - 0.5) * r;
+    }
 
     this.camPos.set(cx, cy, cz);
     this.camera.position.lerp(this.camPos, Math.min(1, dt * 12));

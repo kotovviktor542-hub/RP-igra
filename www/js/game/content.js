@@ -13,8 +13,8 @@ export const ITEMS = {
   energydrink:{ name: 'Энергетик',     cat: 'food',   weight: 0.4, price: 7,   thirst: 18, energy: 40, health: -2 },
 
   // медицина
-  bandage:    { name: 'Бинт',          cat: 'med',    weight: 0.1, price: 12,  health: 18 },
-  medkit:     { name: 'Аптечка',       cat: 'med',    weight: 1.0, price: 55,  health: 55 },
+  bandage:    { name: 'Бинт',          cat: 'med',    weight: 0.1, price: 12,  health: 18, stopsBleed: 60 },
+  medkit:     { name: 'Аптечка',       cat: 'med',    weight: 1.0, price: 55,  health: 55, stopsBleed: 100 },
   painkiller: { name: 'Обезболивающее',cat: 'med',    weight: 0.1, price: 20,  health: 10, mood: 6 },
 
   // электроника

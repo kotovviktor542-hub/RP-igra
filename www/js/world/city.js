@@ -7,6 +7,7 @@ import { getTex, getFacade, getStorefront } from '../core/textures.js';
 import { makeRNG, boxAt, SpatialGrid } from '../core/utils.js';
 import { makeBuilding, makeHouse, makeGarage, makeWarehouse, FLOOR_H } from './buildings.js';
 import { PropSystem } from './props.js';
+import { TrafficLights } from './trafficlights.js';
 import { FACTIONS } from '../game/factions.js';
 
 export const GRID = 11;          // кварталов по стороне
@@ -58,6 +59,7 @@ function buildMaterials() {
 
   mats.trim = new THREE.MeshStandardMaterial({ color: 0xd3cec2, roughness: 0.6 });
   mats.metal = new THREE.MeshStandardMaterial({ color: 0x9aa0a6, roughness: 0.42, metalness: 0.75 });
+  mats.metalDark = new THREE.MeshStandardMaterial({ color: 0x2c3136, roughness: 0.68, metalness: 0.5 });
   mats.glass = new THREE.MeshStandardMaterial({
     color: 0x6f90a8, roughness: 0.08, metalness: 0.25,
     transparent: true, opacity: 0.62, envMapIntensity: 1.2
@@ -84,6 +86,7 @@ export class City {
     this.rng = makeRNG(seed);
     this.mats = buildMaterials();
     this.props = new PropSystem(scene, CELL);
+    this.lights = new TrafficLights(scene);
 
     this.colliders = [];     // {minX,minZ,maxX,maxZ,h}
     this.pois = [];          // {type,name,x,z,...}
@@ -107,6 +110,7 @@ export class City {
     this._buildRoadGraph();
     this._buildBlocks();
     this.props.build();
+    this.lights.build(this);
     this._assignSpecialShops();
     this._finishChunks();
     return this;
@@ -449,10 +453,7 @@ export class City {
       }
     });
 
-    // светофоры на перекрёстке
-    if (this.rng.chance(0.75)) {
-      this.props.add('trafficLight', roadX(i) + ROAD / 2 + 1.2, roadX(j) + ROAD / 2 + 1.2, Math.PI * 0.75);
-    }
+    // светофоры ставит отдельная система TrafficLights (рабочие фазы)
     // остановка
     if (this.rng.chance(0.22)) {
       this.props.add('busStop', (x0 + x1) / 2, z0 - 2.0, 0);
@@ -1023,7 +1024,14 @@ export class City {
   }
 
   /** Прячет/показывает весь город целиком (используется при входе в помещение). */
+  /** Обновление светофоров — вызывать каждый кадр. */
+  updateLights(dt) {
+    this.lights.update(dt);
+    this.lights.refresh();
+  }
+
   setVisible(on) {
+    this.lights.setVisible(on);
     this.hidden = !on;
     this.bigMeshes.forEach(m => { m.visible = on; });
     this.chunks.forEach(g => { g.visible = on; });   // дистанционное отсечение вернёт своё на первом же кадре

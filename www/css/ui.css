@@ -112,6 +112,18 @@ input{font-family:inherit}
 .fuel-bar{flex:1;height:4px;background:rgba(0,0,0,.6);border-radius:9px;overflow:hidden}
 #fuel-fill{height:100%;width:100%;background:var(--good);transition:width .4s,background .4s}
 .speedo-fuel span{font-size:9px;color:var(--muted)}
+.speedo-gear{position:absolute;right:-4px;top:-6px;min-width:26px;height:26px;border-radius:50%;
+  background:rgba(8,12,20,.88);border:1px solid var(--line2);display:flex;align-items:center;justify-content:center;
+  font-size:14px;font-weight:800;color:#8fd0ff;pointer-events:none}
+.speedo-dmg{position:absolute;bottom:-24px;left:0;width:100%;height:4px;background:rgba(0,0,0,.6);
+  border-radius:9px;overflow:hidden}
+#dmg-fill{height:100%;width:0;background:#ff5d5d;transition:width .3s}
+
+/* погода */
+.hud-weather{position:absolute;top:calc(var(--st) + 46px);right:10px;display:flex;align-items:center;gap:6px;
+  background:rgba(8,12,20,.72);border:1px solid var(--line2);border-radius:12px;padding:5px 10px;
+  font-size:11px;color:var(--txt);pointer-events:none;backdrop-filter:blur(6px)}
+.hud-weather span:first-child{font-size:15px;line-height:1}
 
 /* подсказка */
 .prompt{position:absolute;bottom:calc(var(--sb) + 196px);left:50%;transform:translateX(-50%);

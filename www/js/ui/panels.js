@@ -7,6 +7,7 @@ import * as S from '../game/state.js';
 import { WEAPONS, AMMO, ammoLabel } from '../game/weapons.js';
 import * as F from '../game/factions.js';
 import { fmtMoney, dist2D } from '../core/utils.js';
+import { SFX } from '../core/audio.js';
 
 const $ = id => document.getElementById(id);
 const el = (tag, cls, html) => {
@@ -33,6 +34,7 @@ export class Panels {
   }
 
   close() {
+    SFX.ui('back');
     this.root.classList.add('hidden');
     this.current = null;
     if (this.game.radial) this.game.radial.setActive(null);
@@ -44,6 +46,7 @@ export class Panels {
   }
 
   open(name, arg) {
+    SFX.ui('click');
     this.current = name;
     this.root.classList.remove('hidden');
     this.body.scrollTop = 0;
@@ -869,6 +872,20 @@ export class Panels {
     });
     b.appendChild(fpsSeg);
     b.appendChild(el('div', 'd', '<div class="d" style="margin-top:6px">30 — красивее, 60 — плавнее. По умолчанию 45.</div>'));
+
+    b.appendChild(el('div', 'sec', 'Звук'));
+    const sndSeg = el('div', 'seg');
+    [[0, 'Выкл'], [0.35, 'Тихо'], [0.7, 'Средне'], [1, 'Громко']].forEach(([v, label]) => {
+      const btn = el('button', 'seg-btn' + (Math.abs(SFX.volume - v) < 0.06 && !SFX.muted ? ' active' : ''), label);
+      btn.onclick = () => { SFX.init(); SFX.setVolume(v); SFX.setMuted(false); SFX.ui('ok'); this.refresh(); };
+      sndSeg.appendChild(btn);
+    });
+    b.appendChild(sndSeg);
+    const muteBtn = el('button', 'btn' + (SFX.muted ? ' good' : ''), SFX.muted ? '🔇 Звук выключен — включить' : '🔊 Выключить звук');
+    muteBtn.style.marginTop = '8px';
+    muteBtn.onclick = () => { SFX.init(); const m = SFX.toggleMute(); if (!m) SFX.ui('ok'); this.refresh(); };
+    b.appendChild(muteBtn);
+    b.appendChild(el('div', 'd', '<div class="d" style="margin-top:6px">Двигатель, сирены, выстрелы, дождь и гром синтезируются на лету — без загрузки файлов.</div>'));
 
     b.appendChild(el('div', 'sec', 'Вид'));
     const camSeg = el('div', 'seg');
