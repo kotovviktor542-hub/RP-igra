@@ -69,16 +69,70 @@ function buildMaterials() {
   mats.corrugated = new THREE.MeshStandardMaterial({ color: 0xa8b0b8, roughness: 0.55, metalness: 0.5 });
   mats.garageDoor = new THREE.MeshStandardMaterial({ color: 0xb9bec4, roughness: 0.5, metalness: 0.4 });
 
+  // поля и просеки между городами
+  const gt = getTex('grass');
+  mats.grass = new THREE.MeshStandardMaterial({ map: gt.map, normalMap: gt.normalMap, roughness: 1.0 });
+  const st = getTex('sidewalk');
+  mats.dirt = new THREE.MeshStandardMaterial({
+    map: st.map, normalMap: st.normalMap, color: 0x8a7450, roughness: 1.0
+  });
+
   return mats;
 }
 
 /* ======================= ГОРОД ======================= */
 /** Куда ставить базы организаций: ячейка сетки (i,j) для каждой фракции. */
-const BASE_CELLS = [
-  ['police', 4, 7], ['gb', 7, 4], ['sgb', 3, 3], ['army', 9, 9],
-  ['mchs', 6, 8], ['smi', 5, 2], ['fsin', 1, 9],
-  ['china', 8, 1], ['moscow', 2, 6], ['skins', 9, 5], ['arzamas', 1, 2]
+/* ================== ГЕОГРАФИЯ ОБЛАСТИ ==================
+   Карта воспроизводит географию Black Russia: не один город, а область
+   (Нижегородская) из нескольких населённых пунктов, связанных трассами.
+   Каждый город занимает свой прямоугольник кварталов сетки. */
+export const SETTLEMENTS = [
+  { id: 'nizhegorodsk', name: 'Нижегородск', i0: 0, i1: 2, j0: 0, j1: 2, char: 'port',
+    note: 'порт, ж/д, заводы, контейнеры' },
+  { id: 'garel',        name: 'Гарель',      i0: 0, i1: 1, j0: 4, j1: 6, char: 'lowtown',
+    note: 'автосалон низкого класса' },
+  { id: 'lytkarino',    name: 'Лыткарино',   i0: 0, i1: 2, j0: 8, j1: 10, char: 'fsb',
+    note: 'ФСБ, рынок, авторынок, МЧС' },
+  { id: 'rublevka',     name: 'Новая Рублёвка', i0: 4, i1: 5, j0: 0, j1: 1, char: 'elite',
+    note: 'элитные дома' },
+  { id: 'egorovka',     name: 'Егоровка',    i0: 6, i1: 7, j0: 0, j1: 1, char: 'village',
+    note: 'деревня, АЗС' },
+  { id: 'arzamas',      name: 'Арзамас',     i0: 4, i1: 7, j0: 4, j1: 7, char: 'center',
+    note: 'центр области: автосалоны, ЖК «Видный»' },
+  { id: 'koryakino',    name: 'Корякино',    i0: 4, i1: 5, j0: 9, j1: 10, char: 'village',
+    note: 'деревня у трассы' },
+  { id: 'yuzhny',       name: 'Южный',       i0: 8, i1: 10, j0: 0, j1: 2, char: 'gov',
+    note: 'Правительство, Аукцион, Телебашня' },
+  { id: 'busaevo',      name: 'Бусаево',     i0: 8, i1: 10, j0: 4, j1: 5, char: 'industrial',
+    note: 'завод, ТК' },
+  { id: 'batyrevo',     name: 'Батырево',    i0: 8, i1: 10, j0: 8, j1: 10, char: 'army',
+    note: 'Военкомат, ВЧ, шахта, казино' }
 ];
+
+/* Магистрали между городами: эти линии дорог — трассы (шире, быстрее).
+   Границы кварталов городов лежат как раз на индексах 3 и 8. */
+export const HIGHWAYS = [3, 8];
+
+/* Базы организаций — как в Black Russia, по своим городам. */
+const BASE_CELLS = [
+  ['police', 10, 1],  // УМВД — Южный, центр отдаём Правительству
+  ['smi',    8, 0],   // СМИ — Южный
+  ['china', 10, 2],   // ОПГ — Южный
+  ['fsin',   9, 4],   // тюрьма — юг карты, Бусаево
+  ['army',   9, 9],   // Военкомат/ВЧ — Батырево
+  ['skins', 10, 8],   // ОПГ — Батырево
+  ['fsb',    1, 9],   // ФСБ — Лыткарино
+  ['mchs',   0, 10],  // МЧС — Лыткарино
+  ['gb',     5, 5],   // больница — Арзамас
+  ['arzamas',6, 6],   // ОПГ «Арзамас» — Арзамас
+  ['sgb',    1, 1],   // 2-я больница — Нижегородск
+  ['moscow', 2, 0]    // ОПГ — Нижегородск
+];
+
+/** Какой город содержит квартал (i, j). */
+export function settlementAtCell(i, j) {
+  return SETTLEMENTS.find(s => i >= s.i0 && i <= s.i1 && j >= s.j0 && j <= s.j1) || null;
+}
 
 export class City {
   constructor(scene, seed = 20261007) {
@@ -93,6 +147,8 @@ export class City {
     this.chunks = new Map(); // "cx,cz" -> THREE.Group
     this.nightMats = [];
     this.districts = [];     // [i][j]
+    this.cellTown = [];      // [i][j] -> населённый пункт
+    this.settlementsList = SETTLEMENTS;   // для подписей на миникарте
     this.roadNodes = [];
     this.roadEdges = [];
     this.parkingSpots = [];
@@ -112,25 +168,52 @@ export class City {
     this.props.build();
     this.lights.build(this);
     this._assignSpecialShops();
+    this._buildLandmarks();
     this._finishChunks();
     return this;
   }
 
+  /** В каком населённом пункте находится точка мира. */
+  settlementAt(x, z) {
+    const i = Math.floor((x - OFFSET) / CELL);
+    const j = Math.floor((z - OFFSET) / CELL);
+    if (i < 0 || j < 0 || i >= GRID || j >= GRID) return null;
+    return this.cellTown && this.cellTown[i] ? this.cellTown[i][j] : null;
+  }
+
+  /** Является ли дорога магистралью между городами. */
+  isHighway(roadIndex) { return HIGHWAYS.includes(roadIndex); }
+
+  /**
+   * Стоит ли точка на магистрали (в пределах проезжей части).
+   * На трассе лимит 90, в городе 60 — как в ПДД.
+   */
+  onHighway(x, z) {
+    for (const k of HIGHWAYS) {
+      const p = roadX(k);
+      if (Math.abs(x - p) < ROAD / 2) return true;   // вдоль оси Z
+      if (Math.abs(z - p) < ROAD / 2) return true;   // вдоль оси X
+    }
+    return false;
+  }
+
   /* ---------- 1. районы ---------- */
   _planDistricts() {
-    const c = (GRID - 1) / 2;
+    // Каждый квартал принадлежит своему населённому пункту и застраивается
+    // по характеру города: центр — башни, окраина — частный сектор и т.д.
+    this.cellTown = [];
     for (let i = 0; i < GRID; i++) {
       this.districts[i] = [];
+      this.cellTown[i] = [];
       for (let j = 0; j < GRID; j++) {
-        const d = Math.max(Math.abs(i - c), Math.abs(j - c));
-        let type;
-        if (d <= 1) type = 'downtown';
-        else if (d <= 2.5) type = 'commercial';
-        else if (i >= GRID - 2 && j <= 1) type = 'industrial';
-        else type = 'residential';
-        this.districts[i][j] = type;
+        const s = settlementAtCell(i, j);
+        this.cellTown[i][j] = s;
+        this.districts[i][j] = s ? this._districtForTown(s, i, j) : 'field';
       }
     }
+
+    // ЖК «Видный» в Арзамасе — те самые высотные «башни»
+    [[4, 4], [4, 5]].forEach(([i, j]) => { this.districts[i][j] = 'downtown'; });
     // точечные вкрапления
     const special = [
       ['park', 3], ['parking', 3], ['plaza', 1], ['gas', 2], ['civic', 3]
@@ -155,6 +238,315 @@ export class City {
 
     // стартовый квартал игрока — всегда жилой с домами
     this.districts[2][2] = 'residential';
+  }
+
+  /**
+   * Характер застройки квартала внутри города.
+   * rel — нормированное расстояние от центра города (0 — центр, 1 — окраина).
+   */
+  _districtForTown(s, i, j) {
+    const ci = (s.i0 + s.i1) / 2, cj = (s.j0 + s.j1) / 2;
+    // не меньше 1, иначе в узких городах (2 квартала) rel всегда = 1
+    const ri = Math.max(1, (s.i1 - s.i0) / 2), rj = Math.max(1, (s.j1 - s.j0) / 2);
+    // среднее, а не максимум: иначе в квадратных городах rel принимает
+    // только 0 или 1 и промежуточных зон не получается
+    const rel = (Math.abs(i - ci) / ri + Math.abs(j - cj) / rj) / 2;
+
+    switch (s.char) {
+      case 'center':      // Арзамас: деловое ядро, торговое кольцо, жильё
+        return rel <= 0.35 ? 'downtown' : rel <= 0.7 ? 'commercial' : 'residential';
+      case 'gov':         // Южный: административный центр + деловой квартал
+        return rel <= 0.4 ? 'civic' : rel <= 0.75 ? 'downtown' : 'commercial';
+      case 'port':        // Нижегородск: промзона у воды, склады, жильё
+        return (i <= s.i0 + 1 && j <= s.j0 + 1) ? 'industrial'
+          : rel <= 0.55 ? 'commercial' : 'residential';
+      case 'fsb':         // Лыткарино: торговый город с рынком
+        return rel <= 0.5 ? 'commercial' : 'residential';
+      case 'army':        // Батырево: частный сектор и промзона у шахты
+        return (i >= s.i1 - 1 && j >= s.j1 - 1) ? 'industrial' : 'residential';
+      case 'industrial':  // Бусаево: заводская зона
+        return rel <= 0.6 ? 'industrial' : 'residential';
+      case 'elite':       // Новая Рублёвка: только частные дома
+        return 'residential';
+      case 'village':     // Егоровка, Корякино: деревня
+        return 'residential';
+      case 'lowtown':     // Гарель: автосалон и жилые дворы
+        return rel <= 0.5 ? 'commercial' : 'residential';
+      default: return 'residential';
+    }
+  }
+
+
+  /* ---------- ориентиры городов, как в Black Russia ---------- */
+  _buildLandmarks() {
+    const byId = id => SETTLEMENTS.find(s => s.id === id);
+
+    // центр города в мировых координатах
+    const center = s => ({
+      x: (roadX(s.i0) + roadX(s.i1 + 1)) / 2,
+      z: (roadX(s.j0) + roadX(s.j1 + 1)) / 2
+    });
+
+    /* --- Южный: телебашня, Правительство, Аукцион, причал --- */
+    const yuz = byId('yuzhny');
+    const yc = center(yuz);
+    this._makeTvTower(roadX(yuz.i0) + CELL * 0.5, roadX(yuz.j0) + CELL * 0.5, yuz);
+    this.pois.push({ type: 'landmark', name: 'Телебашня Южного',
+      x: roadX(yuz.i0) + CELL * 0.5, z: roadX(yuz.j0) + CELL * 0.5 });
+    this.pois.push({ type: 'landmark', name: 'Правительство', x: yc.x, z: yc.z - CELL * 0.6 });
+    this.pois.push({ type: 'landmark', name: 'Аукцион', x: yc.x + CELL * 0.7, z: yc.z });
+
+    /* --- Нижегородск: морской порт и вокзал --- */
+    const niz = byId('nizhegorodsk');
+    this._makePort(roadX(niz.i0) + CELL * 0.4, roadX(niz.j0) + CELL * 0.4);
+    this.pois.push({ type: 'landmark', name: 'Порт Нижегородска',
+      x: roadX(niz.i0) + CELL * 0.4, z: roadX(niz.j0) + CELL * 0.4 });
+    this.pois.push({ type: 'landmark', name: 'Ж/д вокзал',
+      x: roadX(niz.i1 + 1) - CELL * 0.5, z: roadX(niz.j0) + CELL * 0.5 });
+
+    /* --- Батырево: шахта, военкомат, казино --- */
+    const bat = byId('batyrevo');
+    this._makeMine(roadX(bat.i1 + 1) - CELL * 0.5, roadX(bat.j1 + 1) - CELL * 0.5);
+    this.pois.push({ type: 'landmark', name: 'Шахта',
+      x: roadX(bat.i1 + 1) - CELL * 0.5, z: roadX(bat.j1 + 1) - CELL * 0.5 });
+    this.pois.push({ type: 'landmark', name: 'Военкомат',
+      x: roadX(bat.i0) + CELL * 0.5, z: roadX(bat.j0) + CELL * 0.5 });
+    this.pois.push({ type: 'landmark', name: 'Казино «Батырево»',
+      x: roadX(bat.i0) + CELL * 1.5, z: roadX(bat.j0) + CELL * 0.5 });
+
+    /* --- Лыткарино: рынок и авторынок --- */
+    const lyt = byId('lytkarino');
+    this.pois.push({ type: 'landmark', name: 'Рынок Лыткарино',
+      x: roadX(lyt.i0) + CELL * 0.6, z: roadX(lyt.j0) + CELL * 0.6 });
+    this.pois.push({ type: 'landmark', name: 'Авторынок',
+      x: roadX(lyt.i0) + CELL * 1.8, z: roadX(lyt.j1 + 1) - CELL * 0.6 });
+
+    /* --- Бусаево: завод --- */
+    const bus = byId('busaevo');
+    this.pois.push({ type: 'landmark', name: 'Завод Бусаево',
+      x: roadX(bus.i0) + CELL * 0.6, z: roadX(bus.j0) + CELL * 0.6 });
+  }
+
+  /* Телебашня: решётчатая опора, корзина и антенна. */
+  _makeTvTower(x, z, town) {
+    const grp = this._chunkGroup(
+      Math.max(0, Math.min(GRID - 1, town.i0)),
+      Math.max(0, Math.min(GRID - 1, town.j0))
+    );
+    const H = 74, steel = this.mats.metal, dark = this.mats.metalDark;
+    const parts = [];
+
+    // три ноги, сходящиеся кверху
+    for (let k = 0; k < 3; k++) {
+      const a = (k / 3) * Math.PI * 2;
+      const segs = 9;
+      for (let s = 0; s < segs; s++) {
+        const t0 = s / segs, t1 = (s + 1) / segs;
+        const r0 = 7.5 * (1 - t0 * 0.86), r1 = 7.5 * (1 - t1 * 0.86);
+        const y0 = t0 * H * 0.62, y1 = t1 * H * 0.62;
+        const p0 = new THREE.Vector3(Math.cos(a) * r0, y0, Math.sin(a) * r0);
+        const p1 = new THREE.Vector3(Math.cos(a) * r1, y1, Math.sin(a) * r1);
+        const dir = new THREE.Vector3().subVectors(p1, p0);
+        const len = dir.length();
+        const g = new THREE.CylinderGeometry(0.34, 0.42, len, 6);
+        g.translate(0, len / 2, 0);
+        g.rotateX(Math.PI / 2);
+        g.lookAt(dir);
+        g.rotateX(Math.PI / 2);
+        g.translate(p0.x, p0.y, p0.z);
+        parts.push({ geo: g, mat: steel });
+      }
+      // раскосы
+      for (let s = 0; s < 6; s++) {
+        const t0 = s / 6, t1 = (s + 1) / 6;
+        const y = t0 * H * 0.62;
+        const rr = 7.5 * (1 - t0 * 0.86);
+        const g = new THREE.CylinderGeometry(0.16, 0.16, rr * 1.7, 5);
+        g.rotateZ(Math.PI / 2.4);
+        g.translate(Math.cos(a + 0.5) * rr * 0.6, y + 3, Math.sin(a + 0.5) * rr * 0.6);
+        parts.push({ geo: g, mat: dark });
+      }
+    }
+
+    // ствол выше ног
+    const mast = new THREE.CylinderGeometry(0.5, 1.5, H * 0.4, 8);
+    mast.translate(0, H * 0.62 + H * 0.2, 0);
+    parts.push({ geo: mast, mat: steel });
+
+    // антенна
+    const ant = new THREE.CylinderGeometry(0.12, 0.3, 12, 6);
+    ant.translate(0, H + 6, 0);
+    parts.push({ geo: ant, mat: dark });
+
+    const m = new THREE.Group();
+    parts.forEach(p => { const mesh = new THREE.Mesh(p.geo, p.mat); mesh.castShadow = true; m.add(mesh); });
+
+    // корзина обслуживания
+    const basket = new THREE.Mesh(
+      new THREE.CylinderGeometry(4.2, 3.4, 2.6, 12),
+      this.mats.concrete
+    );
+    basket.position.y = H * 0.60;
+    basket.castShadow = true;
+    m.add(basket);
+
+    // сигнальный огонь
+    const beacon = new THREE.Mesh(
+      new THREE.SphereGeometry(0.55, 10, 8),
+      new THREE.MeshStandardMaterial({ color: 0xff2222, emissive: 0xff2222, emissiveIntensity: 2.4 })
+    );
+    beacon.position.y = H + 12.4;
+    m.add(beacon);
+
+    m.position.set(x, 0, z);
+    grp.add(m);
+  }
+
+  /* Порт: причал, вода, козловые краны и контейнеры. */
+  _makePort(x, z) {
+    const i = Math.max(0, Math.min(GRID - 1, Math.round((x - OFFSET) / CELL)));
+    const j = Math.max(0, Math.min(GRID - 1, Math.round((z - OFFSET) / CELL)));
+    const grp = this._chunkGroup(i, j);
+
+    // вода
+    const water = new THREE.Mesh(
+      new THREE.PlaneGeometry(120, 120).rotateX(-Math.PI / 2),
+      new THREE.MeshStandardMaterial({ color: 0x22414f, roughness: 0.12, metalness: 0.6 })
+    );
+    water.position.set(x - 46, 0.06, z - 46);
+    grp.add(water);
+
+    // причальная стенка
+    const quay = new THREE.Mesh(
+      new THREE.BoxGeometry(70, 1.2, 46),
+      this.mats.concrete
+    );
+    quay.position.set(x, 0.6, z);
+    quay.receiveShadow = true;
+    quay.castShadow = true;
+    grp.add(quay);
+    this._collide(x, z, 70, 46, 1.2);
+
+    // два козловых крана
+    [-18, 18].forEach(dx => {
+      const cr = new THREE.Group();
+      const legs = [];
+      [[-9, -6], [9, -6], [-9, 6], [9, 6]].forEach(([lx, lz]) => {
+        const g = new THREE.BoxGeometry(1.1, 26, 1.1);
+        g.translate(lx, 13, lz);
+        legs.push(g);
+      });
+      const lm = new THREE.Mesh(mergeGeometries(legs), this.mats.metal);
+      lm.castShadow = true;
+      cr.add(lm);
+
+      const beam = new THREE.Mesh(
+        new THREE.BoxGeometry(30, 1.4, 1.6),
+        new THREE.MeshStandardMaterial({ color: 0xd8452f, roughness: 0.5, metalness: 0.4 })
+      );
+      beam.position.y = 26.6;
+      beam.castShadow = true;
+      cr.add(beam);
+
+      const trolley = new THREE.Mesh(
+        new THREE.BoxGeometry(3.2, 2.2, 2.6), this.mats.metalDark
+      );
+      trolley.position.set(4, 25.2, 0);
+      cr.add(trolley);
+
+      const cable = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.08, 0.08, 12, 5), this.mats.metalDark
+      );
+      cable.position.set(4, 18.6, 0);
+      cr.add(cable);
+
+      cr.position.set(x + dx, 1.2, z);
+      grp.add(cr);
+    });
+
+    // штабеля контейнеров
+    const colors = [0xb4472f, 0x2f6bb4, 0x3f8f4a, 0xb08a2f, 0x6a6f75];
+    for (let k = 0; k < 14; k++) {
+      const c = new THREE.Mesh(
+        new THREE.BoxGeometry(6.1, 2.6, 2.4),
+        new THREE.MeshStandardMaterial({ color: colors[k % colors.length], roughness: 0.7, metalness: 0.25 })
+      );
+      const row = (k / 5) | 0;
+      c.position.set(x - 26 + (k % 5) * 6.6, 1.2 + 2.6 + row * 2.7, z + 14);
+      c.castShadow = true;
+      grp.add(c);
+    }
+
+    this.props.add('fence', x + 34, z, Math.PI / 2);
+    this.pois.push({ type: 'job', job: 'diver', name: 'Порт — подводные работы', x: x - 30, z: z - 30 });
+  }
+
+  /* Шахта: копр, конвейер и отвалы породы. */
+  _makeMine(x, z) {
+    const i = Math.max(0, Math.min(GRID - 1, Math.round((x - OFFSET) / CELL)));
+    const j = Math.max(0, Math.min(GRID - 1, Math.round((z - OFFSET) / CELL)));
+    const grp = this._chunkGroup(i, j);
+
+    // копр — А-образная вышка над стволом
+    const frame = new THREE.Group();
+    [[-1, 1], [1, 1], [-1, -1], [1, -1]].forEach(([sx, sz]) => {
+      const g = new THREE.BoxGeometry(0.9, 30, 0.9);
+      g.translate(sx * 5, 15, sz * 5);
+      const m = new THREE.Mesh(g, this.mats.metalDark);
+      m.castShadow = true;
+      frame.add(m);
+    });
+    const top = new THREE.Mesh(
+      new THREE.BoxGeometry(12, 1.2, 12),
+      new THREE.MeshStandardMaterial({ color: 0xc0563a, roughness: 0.6, metalness: 0.3 })
+    );
+    top.position.y = 30.4;
+    top.castShadow = true;
+    frame.add(top);
+
+    // шкив
+    const wheel = new THREE.Mesh(
+      new THREE.TorusGeometry(2.6, 0.4, 8, 18), this.mats.metal
+    );
+    wheel.position.set(0, 32.6, 0);
+    wheel.rotation.y = Math.PI / 2;
+    frame.add(wheel);
+
+    frame.position.set(x, 0, z);
+    grp.add(frame);
+
+    // здание ствола
+    const shed = new THREE.Mesh(
+      new THREE.BoxGeometry(16, 9, 14), this.mats.corrugated
+    );
+    shed.position.set(x, 4.5, z);
+    shed.castShadow = true;
+    shed.receiveShadow = true;
+    grp.add(shed);
+    this._collide(x, z, 16, 14, 9);
+
+    // конвейер
+    const belt = new THREE.Mesh(
+      new THREE.BoxGeometry(26, 0.6, 2.2), this.mats.metalDark
+    );
+    belt.position.set(x + 18, 5.4, z);
+    belt.rotation.z = -0.22;
+    belt.castShadow = true;
+    grp.add(belt);
+
+    // отвалы породы
+    for (let k = 0; k < 5; k++) {
+      const pile = new THREE.Mesh(
+        new THREE.ConeGeometry(6 + k * 0.6, 4.2 + k * 0.5, 9),
+        this.mats.dirt
+      );
+      pile.position.set(x - 22 + k * 7, 2.1 + k * 0.25, z + 22);
+      pile.castShadow = true;
+      grp.add(pile);
+    }
+
+    this.pois.push({ type: 'job', job: 'mine', name: 'Шахта — спуск в забой', x: x + 12, z: z + 8 });
+    this.pois.push({ type: 'job', job: 'miner', name: 'Рудник — редкая руда', x: x + 16, z: z + 12 });
   }
 
   /* ---------- 2. земля ---------- */
@@ -419,6 +811,7 @@ export class City {
           case 'plaza':       this._blockPlaza(i, j, bx, bz, bw, bd); break;
           case 'gas':         this._blockGas(i, j, bx, bz, bw, bd); break;
           case 'civic':       this._blockCivic(i, j, bx, bz, bw, bd); break;
+          case 'field':       this._blockField(i, j, bx, bz, bw, bd); break;
           default:
             if (typeof type === 'string' && type.startsWith('base:')) {
               this._blockFactionBase(i, j, bx, bz, bw, bd, type.slice(5));
@@ -458,6 +851,42 @@ export class City {
     if (this.rng.chance(0.22)) {
       this.props.add('busStop', (x0 + x1) / 2, z0 - 2.0, 0);
       this.pois.push({ type: 'busstop', name: 'Остановка', x: (x0 + x1) / 2, z: z0 - 5 });
+    }
+  }
+
+  /* --- поля и лес между населёнными пунктами --- */
+  _blockField(i, j, bx, bz, bw, bd) {
+    const r = this.rng;
+    const grp = this._chunkGroup(i, j);
+
+    // вспаханное поле
+    const strip = new THREE.Mesh(
+      new THREE.PlaneGeometry(bw * 0.88, bd * 0.88).rotateX(-Math.PI / 2),
+      this.mats.dirt
+    );
+    strip.position.set(bx, 0.03, bz);
+    strip.receiveShadow = true;
+    grp.add(strip);
+
+    // борозды одним батчем
+    const furrows = [];
+    for (let k = -5; k <= 5; k++) {
+      const f = new THREE.BoxGeometry(bw * 0.84, 0.14, bd * 0.026);
+      f.translate(bx, 0.10, bz + k * bd * 0.078);
+      furrows.push(f);
+    }
+    const fm = new THREE.Mesh(mergeGeometries(furrows), this.mats.grass);
+    fm.receiveShadow = true;
+    grp.add(fm);
+
+    // лесополоса
+    const n = r.int(4, 8);
+    for (let k = 0; k < n; k++) {
+      const a = r.range(0, Math.PI * 2);
+      const rad = r.range(bw * 0.2, bw * 0.44);
+      this.props.add(r.chance(0.35) ? 'pine' : 'tree',
+        bx + Math.cos(a) * rad, bz + Math.sin(a) * rad,
+        r.range(0, 6.28), r.range(0.9, 1.6));
     }
   }
 

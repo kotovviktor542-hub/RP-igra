@@ -610,6 +610,10 @@ function makeShopRoom(kind, rng) {
     colliders.push({ x: -3.4, z: 1.4, w: 2.4, d: 0.8 });
     parts.add(gunWallRack(0, -d / 2 + 0.3, 0));
     parts.add(gunWallRack(-4.5, -d / 2 + 0.3, 0));
+    // к витринам можно подойти и посмотреть ассортимент
+    actions.push({ x: -2.0, z: -1.5, r: 1.8, kind: 'shelf', label: 'Витрина: пистолеты' });
+    actions.push({ x: -2.0, z: 1.4, r: 1.8, kind: 'shelf', label: 'Витрина: длинноствол' });
+    actions.push({ x: 0, z: -d / 2 + 1.6, r: 1.8, kind: 'shelf', label: 'Стеллаж: патроны и амуниция' });
     // мишень на стене
     for (let i = 0; i < 3; i++) {
       const ring = cyl(0.3 - i * 0.09, 0.3 - i * 0.09, 0.02, 5.2, 1.8, -d / 2 + 0.2 + i * 0.01,

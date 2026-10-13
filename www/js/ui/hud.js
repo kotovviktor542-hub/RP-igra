@@ -64,6 +64,14 @@ export class HUD {
     $('hud-bank').textContent = 'Банк ' + fmtMoney(p.bank);
     $('hud-level').textContent = `Ур. ${p.level} · ${p.xp}/${ECONOMY.levelXp(p.level)} XP`;
     $('hud-clock').textContent = engine.clockString;
+
+    // название населённого пункта, как в Black Russia
+    const townEl = $('hud-town');
+    if (townEl) {
+      const town = extra.town || null;
+      townEl.textContent = town ? '📍 ' + town : '';
+      townEl.classList.toggle('hidden', !town);
+    }
     $('hud-fps').textContent = engine.fps + ' fps';
 
     const w = Math.floor(extra.wanted || 0);
@@ -159,16 +167,35 @@ export class HUD {
       }
     }
 
-    // дороги
-    c.strokeStyle = nightAmount > 0.5 ? '#39465a' : '#4d5a6e';
+    // дороги: магистрали между городами — толще и светлее
     c.lineWidth = 16 * scale;
-    c.beginPath();
     for (let i = 0; i <= GRID; i++) {
       const p = roadX(i);
+      const hw = city.isHighway ? city.isHighway(i) : false;
+      c.strokeStyle = hw ? '#6b7a94' : (nightAmount > 0.5 ? '#39465a' : '#4d5a6e');
+      c.lineWidth = (hw ? 22 : 16) * scale;
+      c.beginPath();
       if (Math.abs(p - px) < 190) { c.moveTo(p * scale, (pz - 190) * scale); c.lineTo(p * scale, (pz + 190) * scale); }
       if (Math.abs(p - pz) < 190) { c.moveTo((px - 190) * scale, p * scale); c.lineTo((px + 190) * scale, p * scale); }
+      c.stroke();
     }
-    c.stroke();
+
+    // названия населённых пунктов
+    if (city.settlementsList) {
+      c.font = `${Math.round(10 / Math.max(0.4, scale * 12))}px system-ui, sans-serif`;
+      c.textAlign = 'center';
+      c.textBaseline = 'middle';
+      city.settlementsList.forEach(s => {
+        const cx = (roadX(s.i0) + roadX(s.i1 + 1)) / 2;
+        const cz = (roadX(s.j0) + roadX(s.j1 + 1)) / 2;
+        if (Math.abs(cx - px) > 175 || Math.abs(cz - pz) > 175) return;
+        c.lineWidth = 3;
+        c.strokeStyle = 'rgba(8,12,18,0.85)';
+        c.strokeText(s.name, cx * scale, cz * scale);
+        c.fillStyle = '#cfd9e6';
+        c.fillText(s.name, cx * scale, cz * scale);
+      });
+    }
 
     // маркеры
     (markers || []).forEach(m => {

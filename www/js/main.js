@@ -103,6 +103,15 @@ class Game {
     this.city._buildBlocks();
     await frame();
 
+    await step(70, 'Автошкола, автосервис, нотариус, биржа…');
+    // без этого шага спец-точки не появляются в мире: boot() не зовёт generate()
+    this.city._assignSpecialShops();
+    await frame();
+
+    await step(72, 'Ориентиры городов…');
+    this.city._buildLandmarks();
+    await frame();
+
     await step(74, 'Светофоры на перекрёстках…');
     this.city.lights.build(this.city);
     await frame();
@@ -814,6 +823,15 @@ class Game {
     const job = this._jobStopNear(px, pz, 6);
     if (job) return { kind: 'jobstop', label: 'Сдать точку', data: job };
 
+    // гараж собственного дома — раньше, чем «войти домой»:
+    // игрок может стоять у ворот, а не у входной двери
+    for (const prop of this.player.properties) {
+      if (!prop.garage) continue;
+      if (dist2D(prop.garage.x, prop.garage.z, px, pz) < 6.5) {
+        return { kind: 'garage', label: 'Гараж: ' + prop.name, data: prop };
+      }
+    }
+
     const checks = [
       ['shop', 5.5, x => x.type === 'shop', p => ({
         driving: 'Автошкола — сдать на права',
@@ -846,14 +864,6 @@ class Game {
     }
 
     if (bestV) return { kind: 'enter', label: `Сесть: ${bestV.spec.name} (${bestV.plate})`, data: bestV };
-
-    // гараж собственного дома
-    for (const prop of this.player.properties) {
-      if (!prop.garage) continue;
-      if (dist2D(prop.garage.x, prop.garage.z, px, pz) < 6.5) {
-        return { kind: 'garage', label: 'Гараж: ' + prop.name, data: prop };
-      }
-    }
 
     const bench = this.city.nearestBench(px, pz, 2.6);
     if (bench) return { kind: 'bench', label: 'Присесть на скамейку', data: bench.bench };
@@ -1444,15 +1454,21 @@ class Game {
     const v = p3.vehicle;
     const kmh = v.speedKmh;
 
-    // превышение: в городе 60, штрафуем сильно выше
+    // превышение: в городе 60, на трассе между городами 90
     this._speedAcc = (this._speedAcc || 0) + dt;
     if (this._speedAcc > 3) {
       this._speedAcc = 0;
-      if (kmh > 105) {
+      const hw = this.city.onHighway(v.pos.x, v.pos.z);
+      const limit = hw ? 90 : 60;
+      const fineAt = hw ? 145 : 105;
+      const warnAt = hw ? 112 : 82;
+      if (kmh > fineAt) {
         this.addWanted(0.4, 'превышение скорости');
-        this._issueFine('speeding', `Превышение! ${Math.round(kmh)} км/ч при лимите 60`);
-      } else if (kmh > 82) {
-        this._warnOnce('speed2', 'Сбавь скорость — камеры на каждом перекрёстке', 18);
+        this._issueFine('speeding', `Превышение! ${Math.round(kmh)} км/ч при лимите ${limit}`);
+      } else if (kmh > warnAt) {
+        this._warnOnce('speed2', hw
+          ? 'Трасса: держись до 90, дальше штраф'
+          : 'Сбавь скорость — камеры на каждом перекрёстке', 18);
       }
     }
 
@@ -2023,8 +2039,21 @@ class Game {
       ammoText: WEAPONS[p.equipped] ? ammoLabel(p, p.equipped) : '',
       armed: !!WEAPONS[p.equipped],
       weather: this.interiors.active ? null : { icon: this.weather.icon, name: this.weather.label, temp: this.weather.temp },
-      bleeding: this.bleeding || 0
+      bleeding: this.bleeding || 0,
+      town: this.interiors.active ? null : (this._townNow || null)
     });
+    // в каком населённом пункте сейчас игрок
+    this._townAcc = (this._townAcc || 0) + dt;
+    if (this._townAcc > 1) {
+      this._townAcc = 0;
+      const s = this.city.settlementAt(p3.pos.x, p3.pos.z);
+      const name = s ? s.name : (this.city.onHighway(p3.pos.x, p3.pos.z) ? 'Трасса' : null);
+      if (name !== this._townNow) {
+        this._townNow = name;
+        if (name) this.hud.toast(name, 'info');
+      }
+    }
+
     // фары сами включаются в темноте
     if (driving && !this._manualLights) {
       p3.vehicle.ensureHeadlights();
